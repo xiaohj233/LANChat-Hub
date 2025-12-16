@@ -52,7 +52,7 @@ Thumbs.db
 desktop.ini
 
 # Uploads (user data)
-uploads/
+uploads/*
 !uploads/.gitkeep
 
 # Node modules
@@ -71,6 +71,16 @@ main.spec
 
 # Static cache
 static/cache/
+
+# Emoji resources (downloaded via setup script)
+# Static emoji (emoji-datasource-apple) are safe to commit
+# Animated stickers may have copyright issues - excluded by default
+static/telegram_stickers/
+30hz/
+60hz/
+
+# Uncomment if you also want to exclude static emoji
+# static/emoji/
 
 # Test files (optional - uncomment if you want to exclude)
 # 测试*.py

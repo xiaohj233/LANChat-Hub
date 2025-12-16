@@ -156,6 +156,34 @@ python 测试完整启动流程.py
 python 测试启动密码.py
 ```
 
+## 🎨 Emoji Resources
+
+### Static Emoji (Included)
+This project uses static emoji images from [emoji-datasource-apple](https://www.npmjs.com/package/emoji-datasource-apple) (MIT License), which are included in the repository.
+
+### Animated Stickers (Not Included)
+Animated emoji stickers are **not included** in this repository due to potential copyright concerns. 
+
+To set up animated stickers:
+
+1. Obtain animated emoji files (`.webp` format) from a legal source
+2. Place them in the `30hz/` folder
+3. Run the setup script:
+
+```bash
+cd 其他
+setup_refactor.bat
+```
+
+This will sync the animated stickers to `static/telegram_stickers/`.
+
+**Recommended sources for animated emoji:**
+- Create your own using tools like Adobe After Effects + Lottie
+- Use open-source animated emoji libraries (check licenses carefully)
+- Purchase licensed animated emoji packs
+
+**Note**: Static emoji images are sourced from the open-source `emoji-datasource-apple` package (MIT License).
+
 ## 📦 Building Executable
 
 The project includes PyInstaller spec files for creating standalone executables:
@@ -171,6 +199,11 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+### Third-Party Resources
+
+- **Emoji Images**: [emoji-datasource-apple](https://github.com/iamcal/emoji-data) (MIT License)
+- Emoji graphics are provided by the emoji-datasource-apple package, which is MIT licensed and free to use in both open-source and commercial projects.
 
 ## 🐛 Troubleshooting
 
