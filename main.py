@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-QQ Web Pro v10.0
+LANChat Hub v1.0.0 - 局域网聊天应用
 """
 
 import os
@@ -22,7 +22,7 @@ from flask import Flask, request, jsonify, send_from_directory, render_template_
 app = Flask(__name__)
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 31536000
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024
-app.secret_key = 'qq_web_pro_secret_key_v9_30_usb_edition'
+app.secret_key = 'lanchat_hub_secret_key_v1_0_0'
 
 # 性能优化配置
 # 启用响应流式传输，减少内存占用
@@ -6501,7 +6501,7 @@ HTML_TEMPLATE = """
     <meta charset="UTF-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>QQ Pro v10.0</title>
+    <title>LANChat Hub</title>
     <!-- FIX BUG 2: IE Check Script (Modified to be non-blocking) -->
     <script>
     (function(){
@@ -13513,7 +13513,7 @@ if __name__ == '__main__':
     # ================= 服务器启动密码验证 =================
     if SERVER_STARTUP_PASSWORD:
         print('\n' + '=' * 50)
-        print('QQ Web Pro - Server Startup Authentication')
+        print('LANChat Hub - Server Startup Authentication')
         print('=' * 50)
         print('Please enter the startup password to continue.')
         print('-' * 50)
@@ -13572,7 +13572,7 @@ if __name__ == '__main__':
         from waitress import serve
         
         print('')
-        print('QQ Web Pro - Server starting...')
+        print('LANChat Hub - Server starting...')
         print(f'CPU cores: {cpu_count}, Threads: {threads}')
         print(f'Server ready at http://{local_ip}:{port}')
         print('')

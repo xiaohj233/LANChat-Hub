@@ -1,6 +1,6 @@
-# QQ Web Pro v10.0
+# LANChat Hub
 
-一个现代化的网页聊天应用，支持实时消息、P2P 文件传输和群组聊天功能。
+一个现代化的局域网聊天应用，支持实时消息、P2P 文件传输和群组聊天功能。
 
 ## 主要特性
 
@@ -35,8 +35,8 @@
 ### 1. 克隆仓库
 
 ```bash
-git clone https://github.com/yourusername/qq-web-pro.git
-cd qq-web-pro
+git clone https://github.com/yourusername/lanchat-hub.git
+cd lanchat-hub
 ```
 
 ### 2. 安装依赖
@@ -82,37 +82,12 @@ python main.py
 
 **应用在仅使用静态表情的情况下可以完全正常工作。** 动画表情切换开关仅在安装动画资源后才会显示。
 
-#### 添加动画表情（可选步骤）：
-
-1. 从合法来源获取动画表情文件（`.webp` 格式）
-2. 将文件放置在 `30hz/` 文件夹中
-3. 运行配置脚本：
-
-```bash
-cd 其他
-setup_refactor.bat
-```
-
-此脚本将同步动画表情到 `static/telegram_stickers/` 并在界面中启用动画表情切换功能。
-
-**推荐的动画表情来源：**
-- 使用 Adobe After Effects + Lottie 等工具自行创建
-- 使用开源动画表情库（请仔细检查许可证）
-- 购买授权的动画表情包
-
 **说明：**
 - 静态表情图片来自 `emoji-datasource-apple`（MIT 许可证）
 - 应用会自动检测可用资源并调整界面
 - 无动画资源 = 仅静态表情（不显示切换开关）
 - 有动画资源 = 可选择静态或动画表情
 
-## 文档
-
-- [密码配置指南](README_密码配置.md) - 密码配置详细说明（中文）
-- [管理员密码配置说明](管理员密码配置说明.md) - 管理员密码设置（中文）
-- [服务器启动密码说明](服务器启动密码说明.md) - 启动密码指南（中文）
-- [功能实现总结](功能实现总结.md) - 功能实现摘要（中文）
-- [表情资源设置](EMOJI_SETUP.md) - 表情资源配置详情
 
 ## 安全特性
 
@@ -158,7 +133,7 @@ setup_refactor.bat
 ## 项目结构
 
 ```
-qq-web-pro/
+lanchat-hub/
 ├── main.py                 # 主应用程序文件
 ├── static/                 # 静态资源（CSS、JS、图片）
 ├── uploads/                # 用户上传的文件
@@ -237,8 +212,6 @@ pyinstaller main.spec
 ## 支持
 
 如有问题和疑问：
-- 查看 `文档/` 文件夹中的文档
-- 查看故障排除指南：[启动问题排查指南.md](启动问题排查指南.md)
 - 在 GitHub 上提交 Issue
 
 ## 致谢
@@ -247,5 +220,5 @@ pyinstaller main.spec
 
 ---
 
-**版本**：10.0  
+**版本**：1.0.0  
 **最后更新**：2024 年 12 月
