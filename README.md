@@ -161,10 +161,12 @@ python 测试启动密码.py
 ### Static Emoji (Included)
 This project uses static emoji images from [emoji-datasource-apple](https://www.npmjs.com/package/emoji-datasource-apple) (MIT License), which are included in the repository.
 
-### Animated Stickers (Not Included)
+### Animated Stickers (Optional)
 Animated emoji stickers are **not included** in this repository due to potential copyright concerns. 
 
-To set up animated stickers:
+**The app works perfectly fine with static emoji only.** The animated emoji toggle will only appear if you install animated stickers.
+
+#### To add animated stickers (optional):
 
 1. Obtain animated emoji files (`.webp` format) from a legal source
 2. Place them in the `30hz/` folder
@@ -175,14 +177,18 @@ cd 其他
 setup_refactor.bat
 ```
 
-This will sync the animated stickers to `static/telegram_stickers/`.
+This will sync the animated stickers to `static/telegram_stickers/` and enable the animated emoji toggle in the UI.
 
 **Recommended sources for animated emoji:**
 - Create your own using tools like Adobe After Effects + Lottie
 - Use open-source animated emoji libraries (check licenses carefully)
 - Purchase licensed animated emoji packs
 
-**Note**: Static emoji images are sourced from the open-source `emoji-datasource-apple` package (MIT License).
+**Note**: 
+- Static emoji images are sourced from `emoji-datasource-apple` (MIT License)
+- The app automatically detects available resources and adjusts the UI accordingly
+- No animated stickers = static emoji only (no toggle shown)
+- With animated stickers = both static and animated options available
 
 ## 📦 Building Executable
 
