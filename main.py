@@ -22,7 +22,8 @@ from flask import Flask, request, jsonify, send_from_directory, render_template_
 app = Flask(__name__)
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 31536000
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024
-app.secret_key = 'lanchat_hub_secret_key_v1_0_0'
+# 建议在生产环境中修改此密钥或使用环境变量
+app.secret_key = os.environ.get('SECRET_KEY', 'lanchat_hub_secret_key_v1_0_0')
 
 # 性能优化配置
 # 启用响应流式传输，减少内存占用
@@ -680,12 +681,12 @@ def init_db():
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_p2p_transfer_status ON p2p_transfer_messages(status)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_p2p_transfer_timestamp ON p2p_transfer_messages(timestamp)')
 
-    # 创建默认全员摸鱼群（包含 version 字段）
+    # 创建默认全员交流群（包含 version 字段）
     cursor.execute('SELECT id FROM groups WHERE id = ?', ('group_global',))
     if cursor.fetchone() is None:
         cursor.execute(
             'INSERT INTO groups (id, name, owner, is_system, version) VALUES (?, ?, ?, ?, ?)',
-            ('group_global', '全员摸鱼群', 'system', 1, 0)
+            ('group_global', '全员交流群', 'system', 1, 0)
         )
 
     conn.commit()
@@ -8390,7 +8391,7 @@ HTML_TEMPLATE = """
                         
                         // 如果没有有效的保存会话，默认进入主群聊
                         if(!chatToOpen) {
-                            chatToOpen = {id: 'group_global', type: 'group', name: '全员摸鱼群'};
+                            chatToOpen = {id: 'group_global', type: 'group', name: '全员交流群'};
                         }
                         
                         switchChat(chatToOpen.id, chatToOpen.type, chatToOpen.name);
@@ -8936,7 +8937,7 @@ HTML_TEMPLATE = """
             
             // 登录后等待数据加载，然后进入默认聊天（主群聊）
             setTimeout(() => {
-                switchChat('group_global','group','全员摸鱼群');
+                switchChat('group_global','group','全员交流群');
             }, 500);
         } catch(e){ alert(e.message); }
     }

@@ -92,16 +92,3 @@ static/telegram_stickers/
 其他/
 历史版本/
 md/
-
-# Chinese documentation with old project name (exclude from repository)
-*密码*.md
-*启动*.md
-*日志*.md
-功能实现总结.md
-README_密码配置.md
-密码配置文件清单.txt
-快速配置管理员密码.txt
-启动密码使用示例.txt
-聊天室.spec
-聊天室无命令行.spec
-测试日志级别.html
