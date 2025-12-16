@@ -35,9 +35,11 @@
 ### 1. 克隆仓库
 
 ```bash
-git clone https://github.com/yourusername/lanchat-hub.git
+git clone https://github.com/你的用户名/lanchat-hub.git
 cd lanchat-hub
 ```
+
+或直接下载 ZIP 文件并解压。
 
 ### 2. 安装依赖
 
