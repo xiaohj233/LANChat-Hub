@@ -8683,12 +8683,21 @@ HTML_TEMPLATE = """
         // 步骤4: 同步 Toggle 开关的视觉状态
         logDebug('Init', '步骤4: 同步Toggle开关状态...');
         const toggle = document.getElementById('dynamic-emoji-toggle');
-        if (STICKER_CONFIG.useDynamic) {
-            toggle.classList.add('on');
-            logDebug('Init', 'Toggle开关: 已设置为开启状态');
+        const toggleContainer = toggle.parentElement;
+        
+        // 如果没有加载到动态表情，隐藏整个开关容器
+        if (!loaded || !useTelegramStickers) {
+            toggleContainer.style.display = 'none';
+            logInfo('Init', 'Toggle开关: 已隐藏（无动态资源）');
         } else {
-            toggle.classList.remove('on');
-            logDebug('Init', 'Toggle开关: 已设置为关闭状态');
+            toggleContainer.style.display = 'flex';
+            if (STICKER_CONFIG.useDynamic) {
+                toggle.classList.add('on');
+                logDebug('Init', 'Toggle开关: 已设置为开启状态');
+            } else {
+                toggle.classList.remove('on');
+                logDebug('Init', 'Toggle开关: 已设置为关闭状态');
+            }
         }
         
         logInfo('Init', '========== 初始化完成 ==========');
