@@ -68,7 +68,7 @@
 
 如果你不想配置 Python 环境，可以直接下载预编译的可执行文件：
 
-1. 前往 [Releases](https://github.com/xiaohj233/lanchat-hub/releases) 页面
+1. 前往 [Releases](https://github.com/xiaohj233/LANChat-Hub/releases) 页面
 2. 下载最新版本的压缩包（例如：`LANChat-Hub-v1.0.0-Windows.zip`）
 3. 解压到任意目录
 4. 双击运行 `聊天室.exe`
@@ -89,8 +89,8 @@
 1. **克隆仓库**
 
 ```bash
-git clone https://github.com/xiaohj233/lanchat-hub.git
-cd lanchat-hub
+git clone https://github.com/xiaohj233/LANChat-Hub.git
+cd LANChat-Hub
 ```
 
 2. **安装依赖**
@@ -453,8 +453,8 @@ A: 根据你的配置方式，有以下几种重置方法：
 
 ## 联系方式
 
-- 项目主页: [GitHub](https://github.com/xiaohj233/lanchat-hub)
-- 问题反馈: [Issues](https://github.com/xiaohj233/lanchat-hub/issues)
+- 项目主页: [GitHub](https://github.com/xiaohj233/LANChat-Hub)
+- 问题反馈: [Issues](https://github.com/xiaohj233/LANChat-Hub/issues)
 
 ---
 
