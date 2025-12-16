@@ -1,0 +1,12 @@
+{
+  "name": "chatroom-p2p-tests",
+  "version": "1.0.0",
+  "description": "P2P file transfer property tests",
+  "private": true,
+  "devDependencies": {
+    "fast-check": "^3.15.0"
+  },
+  "dependencies": {
+    "webtorrent": "^2.8.5"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "admin_password_1": "",
+  "admin_password_2": "",
+  "_comment_1": "admin_password_1: 账户管理面板密码（留空使用默认密码 123）",
+  "_comment_2": "admin_password_2: 管理员日志查看密码（留空使用默认密码 321）",
+  "_comment_3": "优先级：main.py 配置 > config.json 配置 > 默认密码"
+}

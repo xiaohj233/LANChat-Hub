@@ -1,0 +1,78 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual Environments
+venv/
+venv1/
+venv2/
+venv_win7/
+.venv/
+ENV/
+env/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+qq_data.db
+
+# Configuration Files (keep only examples)
+config.json
+
+# IDE
+.idea/
+.vscode/
+.claude/
+.qoder/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.hypothesis/
+htmlcov/
+.coverage
+.tox/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Uploads (user data)
+uploads/
+!uploads/.gitkeep
+
+# Node modules
+node_modules/
+
+# Build artifacts
+*.spec
+main.spec
+聊天室.spec
+聊天室无命令行.spec
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+
+# Static cache
+static/cache/
+
+# Test files (optional - uncomment if you want to exclude)
+# 测试*.py
+# 诊断*.py
+# 模拟*.py
