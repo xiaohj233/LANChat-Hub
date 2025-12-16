@@ -1,2 +1,10 @@
+# Web Framework
 Flask>=2.0.0
 Werkzeug>=2.0.0
+
+# Production WSGI Server (recommended)
+waitress>=2.1.0
+
+# Note: All other dependencies (os, json, time, uuid, random, hashlib, 
+# sys, mimetypes, sqlite3, socket, datetime, logging) are Python standard 
+# library modules and do not need to be installed separately.
