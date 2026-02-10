@@ -18,6 +18,446 @@ import datetime
 import logging
 from flask import Flask, request, jsonify, send_from_directory, render_template_string, g
 
+
+# ================= 密码配置区（请在此处修改密码）=================
+
+# 管理员密码配置
+# 优先级：main.py 配置 > config.json 配置 > 默认密码
+# 如果不想在代码中设置密码，请保持为空字符串 ""
+# 密码1：账户管理面板密码
+ADMIN_PASSWORD_1 = ""  # 留空则使用配置文件或默认密码 "123"
+# 密码2：管理员日志查看密码
+ADMIN_PASSWORD_2 = ""  # 留空则使用配置文件或默认密码 "321"
+
+# 服务器启动密码配置
+# 启动密码：运行程序时需要输入的密码才能启动服务器
+# 留空则不需要密码直接启动
+# 注意：此密码无法通过 config.json 配置文件更改，只能在此处设置
+SERVER_STARTUP_PASSWORD = "123"  # 留空则不需要密码
+
+# ================= 启动密码验证模块 =================
+# 运行模式检测、GUI 密码对话框和统一验证接口
+
+from dataclasses import dataclass
+
+@dataclass
+class PasswordDialogResult:
+    """密码对话框返回结果"""
+    success: bool          # 是否验证成功
+    cancelled: bool        # 是否被用户取消
+    attempts_used: int     # 使用的尝试次数
+    error_message: str     # 错误消息（如果有）
+
+
+def is_console_available() -> bool:
+    """
+    检测是否有可用的控制台
+    
+    检测逻辑：
+    1. 检查标准输入输出是否可用
+    2. 处理 PyInstaller 打包环境的特殊情况
+    3. 在 PyInstaller 使用 -w 参数时，stdin/stdout 会被重定向或不可用
+    
+    Returns:
+        bool: True 表示控制台可用（使用命令行输入），False 表示无控制台（需要 GUI）
+    """
+    try:
+        # 检查是否在 PyInstaller 打包环境中
+        is_frozen = getattr(sys, 'frozen', False)
+        
+        # 检查标准输入输出是否可用
+        has_stdin = sys.stdin is not None and hasattr(sys.stdin, 'isatty')
+        has_stdout = sys.stdout is not None and hasattr(sys.stdout, 'write')
+        
+        # 如果是打包环境，进一步检查 stdin 是否真正可用
+        if is_frozen and has_stdin:
+            try:
+                # 尝试检查 stdin 是否是 TTY（终端）
+                # 在 PyInstaller -w 模式下，stdin 可能存在但不是 TTY
+                is_tty = sys.stdin.isatty()
+                
+                # 只有当 stdin 是真正的 TTY 时才认为控制台可用
+                return is_tty and has_stdout
+            except Exception:
+                # 如果检查 isatty() 失败，说明 stdin 不可用
+                return False
+        
+        # 非打包环境或没有 stdin，检查基本的输入输出可用性
+        console_available = has_stdin and has_stdout
+        
+        return console_available
+        
+    except Exception:
+        # 如果检测过程中出现任何异常，假设无控制台
+        return False
+
+
+def show_password_dialog(correct_password: str, max_attempts: int = 3) -> PasswordDialogResult:
+    """
+    显示 GUI 密码输入对话框
+    
+    性能优化：
+    - 延迟导入 tkinter，仅在需要时加载
+    - 使用系统默认字体，避免字体缺失问题（Windows 7 兼容性）
+    - 最小化组件创建，提高渲染速度
+    
+    Windows 7 兼容性：
+    - 仅使用基础 tkinter 组件（Tk, Label, Entry, Button, Frame）
+    - 不使用 ttk 主题组件
+    - 使用系统默认字体，避免字体缺失
+    
+    Args:
+        correct_password: 正确的密码
+        max_attempts: 最大尝试次数（默认3次）
+        
+    Returns:
+        PasswordDialogResult: 对话框返回结果
+    """
+    try:
+        # 延迟导入 tkinter，仅在需要时加载（性能优化）
+        import tkinter as tk
+    except ImportError as e:
+        return PasswordDialogResult(
+            success=False,
+            cancelled=True,
+            attempts_used=0,
+            error_message="无法初始化密码输入界面"
+        )
+    
+    # 用于存储对话框结果的变量
+    result = {
+        'success': False,
+        'cancelled': False,
+        'attempts_used': 0,
+        'error_message': ''
+    }
+    
+    # 当前尝试次数
+    attempts = [0]  # 使用列表以便在嵌套函数中修改
+    
+    def on_submit():
+        """处理密码提交"""
+        password = password_entry.get()
+        attempts[0] += 1
+        
+        if password == correct_password:
+            # 密码正确
+            result['success'] = True
+            result['attempts_used'] = attempts[0]
+            root.destroy()
+        else:
+            # 密码错误
+            remaining = max_attempts - attempts[0]
+            
+            if remaining > 0:
+                # 还有剩余尝试次数
+                error_label.config(text=f"密码错误，还剩 {remaining} 次尝试机会")
+                password_entry.delete(0, tk.END)
+                password_entry.focus()
+            else:
+                # 超过最大尝试次数
+                result['success'] = False
+                result['attempts_used'] = attempts[0]
+                result['error_message'] = "密码验证失败，服务器启动已中止"
+                root.destroy()
+    
+    def on_cancel():
+        """处理用户取消"""
+        result['cancelled'] = True
+        result['attempts_used'] = attempts[0]
+        result['error_message'] = "用户取消操作，服务器启动已中止"
+        root.destroy()
+    
+    def on_closing():
+        """处理窗口关闭事件"""
+        on_cancel()
+    
+    # 创建主窗口
+    root = tk.Tk()
+    root.title("LANChat Hub - 启动密码验证")
+    
+    # 设置窗口大小
+    window_width = 400
+    window_height = 200
+    
+    # 获取屏幕尺寸并计算居中位置
+    screen_width = root.winfo_screenwidth()
+    screen_height = root.winfo_screenheight()
+    x = (screen_width - window_width) // 2
+    y = (screen_height - window_height) // 2
+    
+    # 设置窗口位置和大小
+    root.geometry(f"{window_width}x{window_height}+{x}+{y}")
+    
+    # 禁止调整窗口大小（减少资源消耗）
+    root.resizable(False, False)
+    
+    # 设置窗口关闭事件处理
+    root.protocol("WM_DELETE_WINDOW", on_closing)
+    
+    # 创建主框架
+    main_frame = tk.Frame(root, padx=20, pady=20)
+    main_frame.pack(fill=tk.BOTH, expand=True)
+    
+    # 标题标签（使用系统默认字体，Windows 7 兼容性）
+    title_label = tk.Label(
+        main_frame,
+        text="服务器启动密码验证"
+    )
+    # 使用 configure 设置字体大小，避免指定字体名称
+    try:
+        title_label.configure(font=("", 12, "bold"))
+    except:
+        # 如果设置失败，使用默认字体
+        pass
+    title_label.pack(pady=(0, 10))
+    
+    # 说明标签（使用系统默认字体）
+    instruction_label = tk.Label(
+        main_frame,
+        text="请输入启动密码以继续："
+    )
+    instruction_label.pack(pady=(0, 10))
+    
+    # 密码输入框（使用系统默认字体）
+    password_entry = tk.Entry(
+        main_frame,
+        show="*",  # 密码字符遮罩
+        width=30
+    )
+    password_entry.pack(pady=(0, 10))
+    password_entry.focus()  # 自动聚焦到输入框
+    
+    # 绑定 Enter 键提交
+    password_entry.bind('<Return>', lambda event: on_submit())
+    
+    # 错误消息标签（使用系统默认字体）
+    error_label = tk.Label(
+        main_frame,
+        text="",
+        fg="red"
+    )
+    error_label.pack(pady=(0, 10))
+    
+    # 按钮框架
+    button_frame = tk.Frame(main_frame)
+    button_frame.pack()
+    
+    # 确定按钮（使用系统默认字体）
+    submit_button = tk.Button(
+        button_frame,
+        text="确定",
+        command=on_submit,
+        width=10
+    )
+    submit_button.pack(side=tk.LEFT, padx=5)
+    
+    # 取消按钮（使用系统默认字体）
+    cancel_button = tk.Button(
+        button_frame,
+        text="取消",
+        command=on_cancel,
+        width=10
+    )
+    cancel_button.pack(side=tk.LEFT, padx=5)
+    
+    # 运行主循环
+    try:
+        root.mainloop()
+    except Exception as e:
+        return PasswordDialogResult(
+            success=False,
+            cancelled=True,
+            attempts_used=attempts[0],
+            error_message=f"对话框运行错误: {str(e)}"
+        )
+    
+    # 返回结果
+    return PasswordDialogResult(
+        success=result['success'],
+        cancelled=result['cancelled'],
+        attempts_used=result['attempts_used'],
+        error_message=result['error_message']
+    )
+
+
+def _authenticate_console(password: str, max_attempts: int) -> bool:
+    """
+    控制台模式密码验证
+    
+    使用命令行 input() 接收用户输入，验证密码。
+    
+    Args:
+        password: 正确的密码
+        max_attempts: 最大尝试次数
+        
+    Returns:
+        bool: 验证是否成功
+    """
+    print('\n' + '=' * 50)
+    print('LANChat Hub - Server Startup Authentication')
+    print('=' * 50)
+    print('Please enter the startup password to continue.')
+    print('-' * 50)
+    
+    authenticated = False
+    
+    for attempt in range(max_attempts):
+        # 直接使用 input（Windows cmd 兼容性更好）
+        user_input = input(f'Enter password ({attempt + 1}/{max_attempts}): ')
+        
+        # 清理输入（去除首尾空格）
+        user_input = user_input.strip()
+        
+        # 验证密码（使用相同的验证逻辑）
+        if user_input == password:
+            authenticated = True
+            print('-' * 50)
+            print('✓ Authentication successful!')
+            print('=' * 50)
+            break
+        
+        remaining = max_attempts - attempt - 1
+        if remaining > 0:
+            print(f'✗ Incorrect password. {remaining} attempt(s) remaining.')
+        else:
+            print('-' * 50)
+            print('✗ Authentication failed. Server startup aborted.')
+            print('=' * 50)
+    
+    return authenticated
+
+
+def _authenticate_gui(password: str, max_attempts: int) -> bool:
+    """
+    GUI 模式密码验证
+    
+    使用 tkinter GUI 对话框接收用户输入，验证密码。
+    
+    Args:
+        password: 正确的密码
+        max_attempts: 最大尝试次数
+        
+    Returns:
+        bool: 验证是否成功
+    """
+    try:
+        # 显示 GUI 密码对话框（使用相同的验证逻辑）
+        result = show_password_dialog(password, max_attempts)
+        
+        if result.success:
+            # 验证成功
+            return True
+        
+        if result.cancelled:
+            # 用户取消 - 显示取消提示消息
+            _show_cancellation_message(result.error_message)
+            return False
+        
+        # 验证失败（超过最大尝试次数）
+        _show_error_message(result.error_message)
+        return False
+            
+    except Exception as e:
+        error_msg = f"无法初始化密码输入界面: {str(e)}"
+        _show_error_message(error_msg)
+        return False
+
+
+def _show_cancellation_message(message: str):
+    """
+    显示用户取消操作的提示消息
+    
+    在无窗口模式下，使用 tkinter 消息框显示取消提示。
+    
+    Args:
+        message: 要显示的取消消息
+    """
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+        
+        # 创建隐藏的根窗口
+        root = tk.Tk()
+        root.withdraw()
+        
+        # 显示信息消息框
+        messagebox.showinfo(
+            "操作已取消",
+            message,
+            parent=root
+        )
+        
+        # 销毁根窗口
+        root.destroy()
+        
+    except Exception:
+        # 如果 GUI 显示失败，静默处理
+        pass
+
+
+def _show_error_message(message: str):
+    """
+    显示错误消息
+    
+    在无窗口模式下，使用 tkinter 消息框显示错误提示。
+    
+    Args:
+        message: 要显示的错误消息
+    """
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+        
+        # 创建隐藏的根窗口
+        root = tk.Tk()
+        root.withdraw()
+        
+        # 显示错误消息框
+        messagebox.showerror(
+            "验证失败",
+            message,
+            parent=root
+        )
+        
+        # 销毁根窗口
+        root.destroy()
+        
+    except Exception:
+        # 如果 GUI 显示失败，静默处理
+        pass
+
+
+def authenticate_startup(password: str, max_attempts: int = 3) -> bool:
+    """
+    统一的启动密码验证接口
+    
+    根据运行模式（控制台或无窗口）自动选择合适的密码输入方式：
+    - 控制台模式：使用命令行 input() 输入
+    - 无窗口模式：使用 tkinter GUI 对话框输入
+    
+    两种模式使用相同的验证逻辑，确保一致性。
+    
+    Args:
+        password: 要验证的正确密码
+        max_attempts: 最大尝试次数（默认3次）
+        
+    Returns:
+        bool: 验证是否成功
+            - True: 用户输入正确密码，验证成功
+            - False: 验证失败（密码错误次数超限或用户取消）
+    """
+    # 检测运行模式
+    console_available = is_console_available()
+    
+    if console_available:
+        # 控制台模式：使用命令行输入
+        return _authenticate_console(password, max_attempts)
+    
+    # 无窗口模式：使用 GUI 对话框
+    return _authenticate_gui(password, max_attempts)
+
+
 # ================= 配置区 =================
 app = Flask(__name__)
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 31536000
@@ -32,19 +472,7 @@ app.config['SEND_FILE_OPTIONS'] = {
     'max_age': 0  # 文件下载不缓存
 }
 
-# ================= 管理员密码配置 =================
-# 优先级：main.py 配置 > config.json 配置 > 默认密码
-# 如果不想在代码中设置密码，请保持为空字符串 ""
-# 密码1：账户管理面板密码
-ADMIN_PASSWORD_1 = ""  # 留空则使用配置文件或默认密码 "123"
-# 密码2：管理员日志查看密码
-ADMIN_PASSWORD_2 = ""  # 留空则使用配置文件或默认密码 "321"
 
-# ================= 服务器启动密码配置 =================
-# 启动密码：运行程序时需要输入的密码才能启动服务器
-# 留空则不需要密码直接启动
-# 注意：此密码无法通过 config.json 配置文件更改，只能在此处设置
-SERVER_STARTUP_PASSWORD = ""  # 留空则不需要密码
 
 # --- 关键修改：智能路径判断 (USB 便携模式) ---
 if getattr(sys, 'frozen', False):
@@ -13513,39 +13941,12 @@ if __name__ == '__main__':
     
     # ================= 服务器启动密码验证 =================
     if SERVER_STARTUP_PASSWORD:
-        print('\n' + '=' * 50)
-        print('LANChat Hub - Server Startup Authentication')
-        print('=' * 50)
-        print('Please enter the startup password to continue.')
-        print('-' * 50)
-        
-        max_attempts = 3
-        authenticated = False
-        
-        for attempt in range(max_attempts):
-            # 直接使用 input（Windows cmd 兼容性更好）
-            user_input = input(f'Enter password : ')
-            
-            # 清理输入（去除首尾空格）
-            user_input = user_input.strip()
-            
-            if user_input == SERVER_STARTUP_PASSWORD:
-                authenticated = True
-                print('-' * 50)
-                print('✓ Authentication successful!')
-                print('=' * 50)
-                break
-            else:
-                remaining = max_attempts - attempt - 1
-                if remaining > 0:
-                    print(f'✗ Incorrect password. {remaining} attempt(s) remaining.')
-                else:
-                    print('-' * 50)
-                    print('✗ Authentication failed. Server startup aborted.')
-                    print('=' * 50)
-                    sys.exit(1)
+        # 使用统一的密码验证接口
+        authenticated = authenticate_startup(SERVER_STARTUP_PASSWORD, max_attempts=3)
         
         if not authenticated:
+            # 验证失败或用户取消，优雅退出程序
+            logger.info("Server startup aborted due to authentication failure")
             sys.exit(1)
     
     print('Initializing server...')

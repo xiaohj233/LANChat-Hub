@@ -36,6 +36,7 @@ config.json
 *.swp
 *.swo
 *~
+.agent/
 
 # Testing
 .pytest_cache/

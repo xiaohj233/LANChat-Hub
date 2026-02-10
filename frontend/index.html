@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>LANChat Hub</title>
+    <!-- FIX BUG 2: IE Check Script (Modified to be non-blocking) -->
+    <script>
+    (function(){
+        function isIE() { return (!!window.ActiveXObject || "ActiveXObject" in window); }
+        if(isIE()){
+            window.onload = function() {
+                var div = document.createElement('div');
+                div.style.cssText = 'position:fixed;top:0;left:0;width:100%;padding:10px;background:#ffcc00;color:black;z-index:99999;text-align:center;border-bottom:1px solid #d4a000;font-family:sans-serif;font-size:14px;';
+                div.innerHTML = '⚠️ 检测到您正在使用旧版/IE内核浏览器，为了获得更好的体验，建议切换至 <b>极速模式</b> (Chrome内核) 或更换浏览器。';
+                document.body.insertBefore(div, document.body.firstChild);
+            };
+        }
+    })();
+    </script>
+
+    <link rel="stylesheet" href="/src/style.css">
+    
+    <!-- P2P传输模块 - 核心传输层 -->
+    <script src="/static/p2p_signaling_client.js?v=23"></script>
+    <script src="/static/p2p_session.js?v=23"></script>
+    <script src="/static/p2p_group_session.js?v=23"></script>
+    <script src="/static/p2p_transfer_manager.js?v=23"></script>
+    
+    <!-- P2P传输模块 - 新消息化界面 (Frontend Redesign) -->
+    <script src="/static/p2p_transfer_types.js?v=1"></script>
+    <script src="/static/p2p_speed_calculator.js?v=1"></script>
+    <script src="/static/p2p_database_sync.js?v=1"></script>
+    <script src="/static/p2p_realtime_sync.js?v=1"></script>
+    <script src="/static/p2p_transfer_manager_new.js?v=3"></script>
+    <script src="/static/p2p_validity_checker.js?v=1"></script>
+    <script src="/static/p2p_state_restoration.js?v=1"></script>
+    <script src="/static/p2p_file_size_detector.js?v=1"></script>
+    <script src="/static/p2p_transfer_message.js?v=3"></script>
+    <script src="/static/p2p_system_message.js?v=3"></script>
+    <script src="/static/p2p_message_integration.js?v=3"></script>
+    <script src="/static/p2p_connection_error_handler.js?v=1"></script>
+    <script src="/static/p2p_transfer_interruption_handler.js?v=1"></script>
+    <script src="/static/p2p_degradation_handler.js?v=1"></script>
+    <script src="/static/p2p_transfer_cancellation.js?v=1"></script>
+    <script src="/static/p2p_cancel_notification.js?v=1"></script>
+    <script src="/static/p2p_validity_state_sync.js?v=1"></script>
+    <script src="/static/p2p_error_message_display.js?v=1"></script>
+    <script src="/static/p2p_message_render_optimizer.js?v=1"></script>
+    <script src="/static/p2p_state_update_optimizer.js?v=1"></script>
+    <script src="/static/p2p_memory_manager.js?v=1"></script>
+    <script src="/static/p2p_database_query_optimizer.js?v=1"></script>
+    
+    <!-- P2P传输样式 -->
+    <link rel="stylesheet" href="/static/p2p_transfer_message.css?v=1">
+</head>
+<body>
+
+<div id="toast" class="toast"></div>
+<div id="upload-panel"><div class="up-header" id="up-header"><span id="up-title">文件传输助手</span><span style="cursor:pointer" onclick="closeUploadPanel()">✕</span></div><div class="up-list" id="up-list"></div></div>
+<div id="lightbox" class="lightbox" onclick="closeLightbox()"><div class="lightbox-close">&times;</div><img id="lightbox-img" class="transition" onclick="event.stopPropagation()" onwheel="zoomImg(event)" onmousedown="startDrag(event)" ondragstart="return false"></div>
+
+<div id="ctx-menu" class="ctx-menu">
+    <div class="ctx-item" onclick="menuAction('copy')"><svg class="ctx-icon" viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>复制</div>
+    <div class="ctx-item" id="ctx-fwd" onclick="menuAction('forward')"><svg class="ctx-icon" viewBox="0 0 24 24"><path d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z"/></svg>转发</div>
+    <div class="ctx-item" id="ctx-multi" onclick="menuAction('multi')"><svg class="ctx-icon" viewBox="0 0 24 24"><path d="M22 10l-6-6H2v16h20V10zm-2 8H4V6h10.17l3.83 3.83V18zM11.44 8.97l-4.97 4.94-2.5-2.47-1.41 1.41 3.91 3.91 6.37-6.38z"/></svg>多选</div>
+    <div class="ctx-item" id="ctx-quote" onclick="menuAction('quote')"><svg class="ctx-icon" viewBox="0 0 24 24"><path d="M6 17h3l2-4V7H5v6h3zm8 0h3l2-4V7h-6v6h3z"/></svg>引用</div>
+    <div class="ctx-item" id="ctx-remark" onclick="menuAction('remark')"><svg class="ctx-icon" viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>查看资料/备注</div>
+    <div id="ctx-recall-line" class="ctx-line"></div>
+    <div id="ctx-recall" class="ctx-item" onclick="menuAction('recall')"><svg class="ctx-icon" viewBox="0 0 24 24"><path d="M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z"/></svg>撤回</div>
+</div>
+
+<div id="list-ctx-menu" class="ctx-menu">
+    <div class="ctx-item" onclick="listMenuAction('pin')"><svg class="ctx-icon" viewBox="0 0 24 24"><path d="M16 9V4l1 1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1l1-1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"/></svg><span id="lbl-pin">置顶</span></div>
+    <div class="ctx-item" id="list-ctx-remark" onclick="listMenuAction('remark')"><svg class="ctx-icon" viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>查看资料/备注</div>
+</div>
+
+<div id="multi-bar" class="multi-bar">
+    <div class="m-close" onclick="exitMulti()">✕</div>
+    <div class="m-btn" onclick="multiAction('seq')"><svg viewBox="0 0 24 24"><path d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z"/></svg>逐条转发</div>
+    <div class="m-btn" onclick="multiAction('merge')"><svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/><path d="M0 0h24v24H0z" fill="none"/></svg>合并转发</div>
+    <div class="m-btn" onclick="multiAction('copy')"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>复制</div>
+</div>
+
+<!-- MODALS -->
+<div id="md-login" class="modal-bg" style="display:none;"><div class="modal-box"><div class="modal-h">LANChat Hub</div><form onsubmit="doLogin(); return false;" style="display:contents;"><input id="inp-nick" class="modal-inp" placeholder="输入昵称" maxlength="10" style="text-align:center;"><input id="inp-pwd" type="password" class="modal-inp" placeholder="设置/输入密码" style="text-align:center;" onkeypress="if(event.keyCode==13)doLogin()"><button class="btn-block clickable" type="button" onclick="doLogin()">注册 / 登录</button></form></div></div>
+<div id="md-create" class="modal-bg"><div class="modal-box"><div class="modal-h">新建群组</div><input id="inp-grp-name" class="modal-inp" placeholder="群组名称"><div style="font-size:12px; margin-bottom:10px; color:var(--text-sub);">选择好友:</div><div id="create-list" style="flex:1; overflow-y:auto; margin-bottom:15px; min-height:100px;"></div><button class="btn-block clickable" onclick="submitCreate()">创建</button><div style="text-align:center; margin-top:5px; font-size:12px; cursor:pointer; color:var(--text-sub);" onclick="closeMd('md-create')">取消</div></div></div>
+<div id="md-manage" class="modal-bg"><div class="modal-box"><div class="modal-h">群组管理</div><div class="setting-section"><div class="setting-label">群名称</div><input id="mng-grp-name" class="modal-inp" placeholder="修改群名"><button class="btn-block clickable" style="margin-bottom:0; padding:8px; font-size:13px;" onclick="doRename()">保存名称</button></div><div class="setting-section" style="padding-bottom:0; border:none;"><div class="setting-label">成员管理</div><button class="btn-block clickable" style="background:#30d158; margin-bottom:10px;" onclick="openInvite()">+ 邀请新成员</button><div id="mng-mem-list" style="max-height:150px; overflow-y:auto; background:rgba(0,0,0,0.03); border-radius:8px; padding:5px;"></div></div><button class="btn-block clickable" style="background:#ff3b30; margin-top:15px;" onclick="doDissolve()">解散群组</button><div style="text-align:center; margin-top:10px; font-size:12px; cursor:pointer; color:var(--text-sub);" onclick="closeMd('md-manage')">关闭</div></div></div>
+<div id="md-invite" class="modal-bg"><div class="modal-box"><div class="modal-h">邀请成员</div><div id="invite-list" style="flex:1; overflow-y:auto; margin-bottom:15px; min-height:100px;"></div><button class="btn-block clickable" onclick="submitInvite()">邀请加入</button><div style="text-align:center; margin-top:5px; font-size:12px; cursor:pointer; color:var(--text-sub);" onclick="closeMd('md-invite')">取消</div></div></div>
+<div id="md-set" class="modal-bg"><div class="modal-box" style="width: 340px;"><div class="modal-h">设置</div><div class="setting-section" style="text-align:center; border:none;"><div id="set-av" class="clickable" style="width:80px; height:80px; border-radius:24px; margin:0 auto 15px auto; box-shadow:var(--sh-modal-av); border: 3px solid white;"></div><button class="btn-block clickable" style="width:auto; font-size:12px; padding:5px 15px; background:#30d158;" onclick="changeAv()">🎲 随机头像</button></div><div class="setting-section"><div class="setting-label">修改昵称</div><input id="set-new-nick" class="modal-inp" placeholder="新昵称" style="margin-bottom:5px;"></div><div class="setting-section"><div class="setting-label"><span>视觉特效 (毛玻璃/阴影/动画)</span><div id="vis-toggle" class="toggle-switch" onclick="toggleVisual()"></div></div><div style="font-size:11px; color:#999;">开启后界面更美观，但可能增加卡顿</div></div><form onsubmit="return false;" style="display:contents;"><div class="setting-section" style="border:none;"><div class="setting-label"><span style="cursor:text;" onclick="triggerDev()">修改密码</span></div><input id="set-new-pwd" type="password" class="modal-inp" placeholder="新密码 (留空不修改)" style="margin-bottom:5px;"></div></form><button class="btn-block clickable" onclick="saveProfile()">保存修改</button><button class="btn-block clickable" style="background:#ff3b30; margin-top:10px;" onclick="doLogout()">退出登录</button><div style="text-align:center; font-size:12px; cursor:pointer; color:var(--text-sub);" onclick="closeMd('md-set')">关闭</div></div></div>
+<div id="md-profile" class="modal-bg"><div class="modal-box"><div class="modal-h">用户资料</div><div style="text-align:center;"><div id="pf-av" style="width:100px; height:100px; border-radius:30px; margin:0 auto 20px auto; box-shadow:var(--sh-modal-av);"></div><div id="pf-nick" style="font-size:22px; font-weight:700; margin-bottom:5px;"></div><div id="pf-uid" style="font-size:12px; color:#888; margin-bottom:20px;"></div></div><div class="setting-section" style="border:none;"><div class="setting-label">备注名</div><input id="pf-remark" class="modal-inp" placeholder="设置备注 (留空显示原名)" style="text-align:center;"></div><button class="btn-block clickable" onclick="saveRemark()">保存</button><div style="text-align:center; font-size:12px; cursor:pointer; color:var(--text-sub); margin-top:10px;" onclick="closeMd('md-profile')">关闭</div></div></div>
+<div id="md-dev-auth" class="modal-bg" style="backdrop-filter: var(--glass); background:rgba(0,0,0,0.8);"><div class="modal-box" style="background:#111; border:1px solid #333; color:#ddd;"><div class="modal-h" style="color:#33d17a;">SYSTEM CORE</div><form onsubmit="verifyDev(); return false;" style="display:contents;"><input id="dev-pwd" type="password" class="modal-inp" style="background:#222; border-color:#444; color:#33d17a; text-align:center; letter-spacing:2px;" placeholder="PASSCODE"><button class="btn-block clickable" style="background:#33d17a; color:#000;" type="button" onclick="verifyDev()">ACCESS</button></form><div style="text-align:center; margin-top:10px; font-size:12px; cursor:pointer; color:#666;" onclick="closeMd('md-dev-auth')">TERMINATE</div></div></div>
+<div id="md-dev-logs" class="modal-bg"><div class="modal-box" style="width: 800px; max-width:95%; height:80vh; background:#111; color:#ccc;"><div class="modal-h" style="color:#33d17a;">Global Logs (Audit)</div><div id="dev-logs-content"></div><div style="text-align:center; margin-top:10px; font-size:12px; cursor:pointer; color:#666;" onclick="closeMd('md-dev-logs')">CLOSE</div></div></div>
+<div id="md-picker" class="modal-bg"><div class="modal-box"><div class="modal-h">选择目标</div><div id="picker-list" style="flex:1;overflow-y:auto;max-height:300px;margin-bottom:15px;"></div><button class="btn-block clickable" onclick="submitForward()">发送</button><div style="text-align:center;font-size:12px;color:#888;cursor:pointer;" onclick="closeMd('md-picker')">取消</div></div></div>
+<div id="md-pinned" class="modal-bg"><div class="modal-box" style="width: 500px; max-width:95%; height:70vh; display:flex; flex-direction:column;"><div id="pinned-content" style="flex:1; overflow:hidden; display:flex; flex-direction:column;"></div><div style="text-align:center; margin-top:10px; font-size:12px; cursor:pointer; color:var(--text-sub);" onclick="closeMd('md-pinned')">关闭</div></div></div>
+<div id="md-fwd-detail" class="modal-bg"><div class="modal-box" style="width: 400px; max-width:95%; height:70vh;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;"><div id="fwd-back" class="clickable" style="font-size:14px;color:var(--accent);display:none;" onclick="popFwdStack()">‹ 返回</div><div class="modal-h" id="fwd-title" style="margin-bottom:0;font-size:16px;">聊天记录</div><div style="width:30px;"></div></div><div id="fwd-content" style="flex:1;overflow-y:auto;padding:10px;background:rgba(0,0,0,0.03);border-radius:8px;"></div><div style="text-align:center; margin-top:10px; font-size:12px; cursor:pointer; color:var(--text-sub);" onclick="closeFwdMd()">关闭</div></div></div>
+
+<!-- 账户信息合并管理面板 -->
+<div id="md-account-panel" class="modal-bg" style="backdrop-filter: var(--glass); background:rgba(0,0,0,0.85);">
+    <div class="modal-box" style="width: 700px; max-width:95%; max-height:85vh; background:#111; border:1px solid #333; color:#ddd; display:flex; flex-direction:column;">
+        <div class="modal-h" style="color:#ff9500; font-size:18px; display:flex; align-items:center; justify-content:space-between;">
+            <span>🔐 账户信息合并管理面板</span>
+            <span style="font-size:10px; color:#666; font-weight:normal;">SYSTEM ADMIN</span>
+        </div>
+        <div style="padding:10px 0; border-bottom:1px solid #333; margin-bottom:10px;">
+            <div style="display:flex; gap:10px;">
+                <button class="btn-block clickable" style="flex:1; background:#30d158; margin:0; padding:10px; font-size:13px;" onclick="showAccessControlSection()">🔓 访问控制</button>
+                <button class="btn-block clickable" style="flex:1; background:#ff3b30; margin:0; padding:10px; font-size:13px;" onclick="showDeleteAccountSection()">🗑️ 删除账户</button>
+                <button class="btn-block clickable" style="flex:1; background:#007aff; margin:0; padding:10px; font-size:13px;" onclick="showMergeAccountSection()">🔗 合并账户</button>
+            </div>
+        </div>
+        
+        <!-- 访问控制区域 -->
+        <div id="access-control-section" style="display:none; flex:1; overflow-y:auto;">
+            <div style="background:#1a1a1a; padding:12px; border-radius:8px; margin-bottom:10px; border-left:3px solid #30d158;">
+                <div style="color:#30d158; font-weight:600; margin-bottom:5px;">🔓 无限制访问说明</div>
+                <div style="font-size:12px; color:#999; line-height:1.5;">
+                    • 启用后，用户可以查看所有历史消息，不受注册时间限制<br>
+                    • 适用场景：学校机房时钟不准确、助教/管理员账户<br>
+                    • 可以单独为某个用户启用，也可以批量为所有用户启用
+                </div>
+            </div>
+            <div style="display:flex; gap:10px; margin-bottom:15px;">
+                <button class="btn-block clickable" style="flex:1; background:#30d158; margin:0; padding:10px; font-size:12px;" onclick="batchToggleAccess(true)">✅ 批量启用所有用户</button>
+                <button class="btn-block clickable" style="flex:1; background:#ff9500; margin:0; padding:10px; font-size:12px;" onclick="batchToggleAccess(false)">❌ 批量禁用所有用户</button>
+            </div>
+            <div style="color:#888; font-size:12px; margin-bottom:8px;">单独管理用户访问权限：</div>
+            <div id="access-control-list" style="flex:1; overflow-y:auto; max-height:300px; background:#1a1a1a; border-radius:8px; padding:5px;"></div>
+        </div>
+        
+        <!-- 删除账户区域 -->
+        <div id="delete-account-section" style="display:none; flex:1; overflow-y:auto;">
+            <div style="background:#1a1a1a; padding:12px; border-radius:8px; margin-bottom:10px; border-left:3px solid #ff3b30;">
+                <div style="color:#ff3b30; font-weight:600; margin-bottom:5px;">⚠️ 删除账户说明</div>
+                <div style="font-size:12px; color:#999; line-height:1.5;">
+                    • 删除操作仅清除该账户的个人资料信息（昵称、头像等）<br>
+                    • 历史聊天记录仍将保留在系统中<br>
+                    • 被删除账户将无法再次登录系统<br>
+                    • 同名新账号将被视为全新账户，不继承任何历史记录
+                </div>
+            </div>
+            <div style="color:#888; font-size:12px; margin-bottom:8px;">选择要删除的账户：</div>
+            <div id="delete-account-list" style="flex:1; overflow-y:auto; max-height:250px; background:#1a1a1a; border-radius:8px; padding:5px;"></div>
+            <div style="margin-top:15px;">
+                <button class="btn-block clickable" style="background:#ff3b30;" onclick="confirmDeleteAccount()">确认删除选中账户</button>
+            </div>
+        </div>
+        
+        <!-- 合并账户区域 -->
+        <div id="merge-account-section" style="display:none; flex:1; overflow-y:auto;">
+            <div style="background:#1a1a1a; padding:12px; border-radius:8px; margin-bottom:10px; border-left:3px solid #007aff;">
+                <div style="color:#007aff; font-weight:600; margin-bottom:5px;">🔗 合并账户说明</div>
+                <div style="font-size:12px; color:#999; line-height:1.5;">
+                    • 将源账户的所有消息、群组关系迁移到目标账户<br>
+                    • 合并后，所有源账户发送的消息将显示为目标账户发送<br>
+                    • 目标账户保留原有的登录凭证（用户名与密码）<br>
+                    • 源账户将自动失效且不可恢复
+                </div>
+            </div>
+            <div style="display:flex; gap:15px;">
+                <div style="flex:1;">
+                    <div style="color:#ff9500; font-size:12px; margin-bottom:8px; font-weight:600;">源账户 (将被合并)：</div>
+                    <div id="merge-source-list" style="height:200px; overflow-y:auto; background:#1a1a1a; border-radius:8px; padding:5px; border:1px solid #333;"></div>
+                </div>
+                <div style="display:flex; align-items:center; color:#666; font-size:24px;">→</div>
+                <div style="flex:1;">
+                    <div style="color:#30d158; font-size:12px; margin-bottom:8px; font-weight:600;">目标账户 (保留)：</div>
+                    <div id="merge-target-list" style="height:200px; overflow-y:auto; background:#1a1a1a; border-radius:8px; padding:5px; border:1px solid #333;"></div>
+                </div>
+            </div>
+            <div id="merge-preview" style="margin-top:10px; padding:10px; background:#1a1a1a; border-radius:8px; display:none;">
+                <div style="font-size:12px; color:#888;">合并预览：</div>
+                <div id="merge-preview-content" style="font-size:13px; color:#ddd; margin-top:5px;"></div>
+            </div>
+            <div style="margin-top:15px;">
+                <button class="btn-block clickable" style="background:#007aff;" onclick="confirmMergeAccounts()">确认合并账户</button>
+            </div>
+        </div>
+        
+        <div style="text-align:center; margin-top:15px; font-size:12px; cursor:pointer; color:#666;" onclick="closeMd('md-account-panel')">关闭面板</div>
+    </div>
+</div>
+
+<!-- Old P2P UI elements removed - now using message-based interface -->
+
+<div id="app">
+    <div class="sidebar">
+        <div id="my-av" class="avatar-box clickable" onclick="openSet()"></div>
+        <div class="nav-btn clickable active" id="nav-msg" onclick="tab('msg')"><svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg></div>
+        <div class="nav-btn clickable" id="nav-con" onclick="tab('con')"><svg viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg></div>
+        <div class="nav-btn clickable" id="nav-file" onclick="tab('file')"><svg viewBox="0 0 24 24"><path d="M6 2c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6H6zm7 7V3.5L18.5 9H13z"/></svg></div>
+    </div>
+
+    <div class="list-pane">
+        <div id="tab-msg" style="display:flex; flex-direction:column; height:100%;"><div class="search-header"><div class="search-title">消息</div><div class="btn-circle clickable" onclick="openCreate()">+</div></div><div class="list-content" id="ls-msg"></div></div>
+        <div id="tab-con" style="display:none; flex-direction:column; height:100%;"><div class="search-header"><div class="search-title">通讯录</div></div><div class="list-content" id="ls-con"></div></div>
+        <div id="tab-file" style="display:none; flex-direction:column; height:100%;">
+            <div class="search-header">
+                <div class="search-title">文件</div>
+                <div class="btn-circle clickable" onclick="loadFiles()">↻</div>
+            </div>
+            <div style="padding: 10px 15px; border-bottom: 1px solid var(--border);">
+                <div class="input-wrap" style="border-radius: 12px; padding: 4px 10px; display: flex; align-items: center;">
+                    <input type="text" id="file-search-input" class="inp-txt" placeholder="搜索文件名..." style="padding: 6px; font-size: 14px; flex: 1; min-width: 0;" onkeypress="if(event.key==='Enter') searchFiles()">
+                    <button class="btn-send" onclick="searchFiles()" style="padding: 4px 10px; font-size: 13px; flex-shrink: 0; white-space: nowrap;">搜索</button>
+                </div>
+            </div>
+            <div class="list-content" id="ls-file" onscroll="handleFileListScroll()"></div>
+        </div>
+    </div>
+
+    <div class="chat-pane" id="chat-pane">
+        <div id="notif-banner" class="notif-banner" onclick="handleNotifClick()">
+            <div id="notif-av" class="notif-av"></div>
+            <div class="notif-body">
+                <div id="notif-title" class="notif-title"></div>
+                <div id="notif-text" class="notif-text"></div>
+            </div>
+        </div>
+
+        <div class="chat-top">
+            <div style="display:flex; align-items:center;">
+                <div class="mobile-back" onclick="backMobileList()">‹</div>
+                <div id="mobile-unread-badge" class="mobile-unread-badge">0</div>
+                <div><div class="chat-name" id="chat-t">未选择</div><div class="chat-stat" id="chat-s"></div></div>
+            </div>
+            <div id="btn-grp-set" class="btn-icon clickable" style="display:none;" onclick="openManage()">⚙️</div>
+        </div>
+        <div class="msg-area" id="msg-box" onclick="closeCtx()">
+            <div class="empty">选择左侧会话开始聊天</div>
+        </div>
+        <div id="unread-float" class="unread-float" onclick="jumpToBottom()"><svg viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg><span>0</span></div>
+        <div class="chat-bottom" id="input-area" style="display:none;">
+            <div id="sticker-panel" class="sticker-panel">
+                <div class="sticker-tabs-container">
+                    <div class="sticker-tabs">
+                        <div class="sticker-tab active" data-category="recent" title="最近使用"><img src="/static/emoji/23f0.png" class="emoji-img-category" alt="⏰" title="最近使用"></div>
+                        <div class="sticker-tab" data-category="smileys_emotion" title="表情与情感"><img src="/static/emoji/1f600.png" class="emoji-img-category" alt="😀" title="表情与情感"></div>
+                        <div class="sticker-tab" data-category="people_body" title="人物与手势"><img src="/static/emoji/1f44b.png" class="emoji-img-category" alt="👋" title="人物与手势"></div>
+                        <div class="sticker-tab" data-category="animals_nature" title="动物与自然"><img src="/static/emoji/1f43b.png" class="emoji-img-category" alt="🐻" title="动物与自然"></div>
+                        <div class="sticker-tab" data-category="food_drink" title="食物与饮料"><img src="/static/emoji/1f354.png" class="emoji-img-category" alt="🍔" title="食物与饮料"></div>
+                        <div class="sticker-tab" data-category="activity" title="活动与娱乐"><img src="/static/emoji/26bd.png" class="emoji-img-category" alt="⚽" title="活动与娱乐"></div>
+                        <div class="sticker-tab" data-category="objects" title="物体"><img src="/static/emoji/1f4a1.png" class="emoji-img-category" alt="💡" title="物体"></div>
+                        <div class="sticker-tab" data-category="travel_places" title="旅行与地点"><img src="/static/emoji/1f680.png" class="emoji-img-category" alt="🚀" title="旅行与地点"></div>
+                        <div class="sticker-tab" data-category="symbols_flags" title="符号与旗帜"><img src="/static/emoji/2049-fe0f.png" class="emoji-img-category" alt="⁉️" title="符号与旗帜"></div>
+                    </div>
+                    <div class="sticker-tabs-scrollbar">
+                        <div class="sticker-tabs-scrollbar-thumb"></div>
+                    </div>
+                </div>
+                <div class="sticker-content" id="sticker-content"></div>
+                <div class="sticker-pagination">
+                    <button id="sticker-prev" class="sticker-page-btn">◀</button>
+                    <span id="sticker-page-info" class="sticker-page-info">1 / 1</span>
+                    <button id="sticker-next" class="sticker-page-btn">▶</button>
+                    <div style="margin-left: auto; display: flex; align-items: center; gap: 8px;">
+                        <span style="font-size: 11px; color: var(--text-sub);">动态</span>
+                        <div id="dynamic-emoji-toggle" class="toggle-switch" onclick="toggleDynamicEmoji()" title="切换动态/静态表情"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="reply-bar" id="reply-bar">
+                <div class="reply-content" id="reply-content"></div>
+                <div class="reply-close" onclick="cancelQuote()">×</div>
+            </div>
+            <div class="input-wrap">
+                <label class="btn-icon clickable" onclick="toggleSticker()"><svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm3.5-9c.83 0 1.5-.67 1.5-1.5S16.33 8 15.5 8 14 8.67 14 9.5s.67 1.5 1.5 1.5zm-7 0c.83 0 1.5-.67 1.5-1.5S9.33 8 8.5 8 7 8.67 7 9.5 7.67 11 8.5 11zm3.5 6.5c2.33 0 4.31-1.46 5.11-3.5H6.89c.8 2.04 2.78 3.5 5.11 3.5z"/></svg></label>
+                <label class="btn-icon clickable"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5a2.5 2.5 0 0 1 5 0v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5a2.5 2.5 0 0 0 5 0V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z"/></svg><input type="file" multiple hidden onchange="upFiles(this.files)"></label>
+                <textarea id="inp-msg" class="inp-txt" rows="1" placeholder="发送消息..."></textarea>
+                <button class="btn-send clickable" onclick="send()">发送</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="mobile-nav">
+        <div class="m-nav-item active" id="mn-msg" onclick="tab('msg')"><svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg><span>消息</span></div>
+        <div class="m-nav-item" id="mn-con" onclick="tab('con')"><svg viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg><span>通讯录</span></div>
+        <div class="m-nav-item" id="mn-file" onclick="tab('file')"><svg viewBox="0 0 24 24"><path d="M6 2c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6H6zm7 7V3.5L18.5 9H13z"/></svg><span>文件</span></div>
+        <div class="m-nav-item" onclick="openSet()"><svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg><span>我</span></div>
+    </div>
+</div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
