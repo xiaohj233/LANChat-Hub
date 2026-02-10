@@ -18,6 +18,10 @@ import datetime
 import logging
 from flask import Flask, request, jsonify, send_from_directory, render_template_string, g
 
+# DEBUG: Prove file is running
+with open('debug_start.txt', 'w') as f:
+    f.write('Main.py started at ' + str(time.time()))
+
 
 # ================= 密码配置区（请在此处修改密码）=================
 
@@ -33,7 +37,7 @@ ADMIN_PASSWORD_2 = ""  # 留空则使用配置文件或默认密码 "321"
 # 启动密码：运行程序时需要输入的密码才能启动服务器
 # 留空则不需要密码直接启动
 # 注意：此密码无法通过 config.json 配置文件更改，只能在此处设置
-SERVER_STARTUP_PASSWORD = "123"  # 留空则不需要密码
+SERVER_STARTUP_PASSWORD = ""  # 留空则不需要密码
 
 # ================= 启动密码验证模块 =================
 # 运行模式检测、GUI 密码对话框和统一验证接口
@@ -521,6 +525,61 @@ if not os.path.exists(UPLOAD_FOLDER):
         os.makedirs(UPLOAD_FOLDER)
     except OSError:
         pass
+
+
+
+# ================= 强制静态文件路由 =================
+@app.route('/static/telegram_stickers/mapping.json')
+def serve_sticker_mapping():
+    """保留旧路由以防万一，但主要使用新API"""
+    sticker_dir = os.path.join(get_static_folder(), 'telegram_stickers')
+    try:
+        if not os.path.exists(sticker_dir):
+            return jsonify({"error": "Sticker directory not found"}), 404
+            
+        return send_from_directory(sticker_dir, 'mapping.json')
+    except Exception as e:
+        app.logger.error(f"Error serving mapping.json: {e}")
+        return jsonify({"error": str(e)}), 404
+
+@app.route('/api/get_mapping')
+def get_sticker_mapping():
+    """新API：明确获取 mapping.json"""
+    sticker_dir = os.path.join(get_static_folder(), 'telegram_stickers')
+    print(f"DEBUG: get_sticker_mapping hit. Dir: {sticker_dir}")
+    try:
+        if not os.path.exists(sticker_dir):
+            print("DEBUG: Sticker dir missing")
+            return jsonify({"error": "Sticker directory not found", "path": sticker_dir}), 404
+        
+        file_path = os.path.join(sticker_dir, 'mapping.json')
+        print(f"DEBUG: File check: {file_path} -> {os.path.exists(file_path)}")
+        
+        if not os.path.exists(file_path):
+            print("DEBUG: Mapping file missing")
+            return jsonify({"error": "Mapping file missing", "path": file_path}), 404
+            
+        return send_from_directory(sticker_dir, 'mapping.json')
+    except Exception as e:
+        app.logger.error(f"Error serving mapping.json from API: {e}")
+        print(f"DEBUG: Exception: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/static/telegram_stickers/<path:filename>')
+def serve_sticker_file(filename):
+    """强制提供 webp 表情文件"""
+    sticker_dir = os.path.join(get_static_folder(), 'telegram_stickers')
+    # 减少日志输出，仅在调试时开启
+    # print(f"[DEBUG] serve_sticker_file: {filename}")
+    try:
+        if not os.path.exists(os.path.join(sticker_dir, filename)):
+            print(f"[DEBUG] Sticker not found: {filename}")
+            return jsonify({"error": "File not found"}), 404
+            
+        return send_from_directory(sticker_dir, filename)
+    except Exception as e:
+        app.logger.error(f"Error serving sticker {filename}: {e}")
+        return jsonify({"error": str(e)}), 404
 
 
 # ================= 管理员密码加载 =================
@@ -8468,8 +8527,9 @@ HTML_TEMPLATE = """
     async function loadTelegramStickers() {
         logDebug('Telegram Stickers', '========== 开始加载映射表 ==========');
         try {
-            logDebug('Telegram Stickers', 'Fetching /static/telegram_stickers/mapping.json...');
-            const response = await fetch('/static/telegram_stickers/mapping.json');
+            // 尝试从新API加载
+            logDebug('Telegram Stickers', 'Fetching /api/get_mapping...');
+            const response = await fetch('/api/get_mapping');
             logDebug('Telegram Stickers', '响应状态:', response.status, response.ok);
             if (!response.ok) {
                 throw new Error('Mapping not found, status: ' + response.status);
@@ -8520,8 +8580,31 @@ HTML_TEMPLATE = """
             logError('Telegram Stickers', '错误类型:', e.name);
             logError('Telegram Stickers', '错误信息:', e.message);
             logError('Telegram Stickers', '错误堆栈:', e.stack);
-            useTelegramStickers = false;
+            // 调试用：弹窗提示错误
+            // alert('Telegram Stickers Load Validation Failed: ' + e.message);
             return false;
+        }
+    }
+
+    // 窗口大小改变时调整面板位置 (Moved to global scope)
+    function adjustStickerPanelPosition() {
+        const panel = document.getElementById('sticker-panel');
+        if (panel && panel.style.display === 'flex') {
+            const panelRect = panel.getBoundingClientRect();
+            const viewportWidth = window.innerWidth;
+            
+            // 如果面板右侧超出视口，调整其位置
+            if (panelRect.right > viewportWidth) {
+                const overflow = panelRect.right - viewportWidth;
+                const currentLeft = parseInt(panel.style.left) || 20;
+                const newLeft = Math.max(10, currentLeft - overflow);
+                panel.style.left = newLeft + 'px';
+            }
+            
+            // 确保面板左侧不会超出视口左侧
+            if (panelRect.left < 0) {
+                panel.style.left = '10px';
+            }
         }
     }
 
@@ -9076,10 +9159,58 @@ HTML_TEMPLATE = """
         }
     }
 
+    /**
+     * 切换动态/静态表情显示模式
+     * 
+     * 功能说明:
+     * - 动态模式: 显示 60hz WebP 动画表情
+     * - 静态模式: 显示 PNG 静态图片表情
+     * 
+     * 触发时机:
+     * - 用户点击表情面板底部的切换开关
+     */
+    function toggleDynamicEmoji() {
+        // 1. 切换状态
+        STICKER_CONFIG.useDynamic = !STICKER_CONFIG.useDynamic;
+        
+        // 2. 更新开关视觉状态
+        const toggle = document.getElementById('dynamic-emoji-toggle');
+        if (STICKER_CONFIG.useDynamic) {
+            toggle.classList.add('on');
+            logInfo('Emoji Toggle', '已切换到动态模式 (WebP)');
+        } else {
+            toggle.classList.remove('on');
+            logInfo('Emoji Toggle', '已切换到静态模式 (PNG)');
+        }
+        
+        // 3. 保存用户偏好到 localStorage (持久化)
+        try {
+            localStorage.setItem('qq_use_dynamic_emoji', STICKER_CONFIG.useDynamic);
+        } catch (e) {
+            logWarn('Emoji Toggle', '无法保存偏好设置:', e.message);
+        }
+        
+        // 4. 重新渲染表情面板以应用新模式
+        renderStickers();
+    }
+
     async function initStickers() {
         logDebug('Init', '╔════════════════════════════════════════════════════╗');
         logDebug('Init', '║     初始化表情系统                                  ║');
         logDebug('Init', '╚════════════════════════════════════════════════════╝');
+        
+        // 步骤0.1: 从 localStorage 读取用户偏好设置
+        try {
+            const savedPref = localStorage.getItem('qq_use_dynamic_emoji');
+            if (savedPref !== null) {
+                STICKER_CONFIG.useDynamic = (savedPref === 'true');
+                logDebug('Init', '步骤0.1: 已读取用户偏好设置 - 动态模式:', STICKER_CONFIG.useDynamic);
+            } else {
+                logDebug('Init', '步骤0.1: 未找到保存的偏好设置,使用默认值:', STICKER_CONFIG.useDynamic);
+            }
+        } catch (e) {
+            logWarn('Init', '步骤0.1: 无法读取动态表情偏好设置:', e.message);
+        }
         
         // 检查emojiMapping状态
         logDebug('Init', '步骤0: 检查emojiMapping加载状态...');
@@ -9130,28 +9261,6 @@ HTML_TEMPLATE = """
         }
         
         logInfo('Init', '========== 初始化完成 ==========');
-
-        // 窗口大小改变时调整面板位置
-        function adjustStickerPanelPosition() {
-            const panel = document.getElementById('sticker-panel');
-            if (panel && panel.style.display === 'flex') {
-                const panelRect = panel.getBoundingClientRect();
-                const viewportWidth = window.innerWidth;
-                
-                // 如果面板右侧超出视口，调整其位置
-                if (panelRect.right > viewportWidth) {
-                    const overflow = panelRect.right - viewportWidth;
-                    const currentLeft = parseInt(panel.style.left) || 20;
-                    const newLeft = Math.max(10, currentLeft - overflow);
-                    panel.style.left = newLeft + 'px';
-                }
-                
-                // 确保面板左侧不会超出视口左侧
-                if (panelRect.left < 0) {
-                    panel.style.left = '10px';
-                }
-            }
-        }
 
         // 监听窗口大小改变事件
         window.addEventListener('resize', adjustStickerPanelPosition);
@@ -9275,23 +9384,7 @@ HTML_TEMPLATE = """
 
 
 
-    // 切换动静态表情模式
-    function toggleDynamicEmoji() {
-        STICKER_CONFIG.useDynamic = !STICKER_CONFIG.useDynamic;
-        const toggle = document.getElementById('dynamic-emoji-toggle');
-        
-        if (STICKER_CONFIG.useDynamic) {
-            toggle.classList.add('on');
-            logDebug('Toggle', '✓ 已切换到动态模式');
-        } else {
-            toggle.classList.remove('on');
-            logDebug('Toggle', '✓ 已切换到静态模式');
-        }
-        
-        // 保持当前页码并重新渲染（不重置页码）
-        // STICKER_CONFIG.currentPage = 0;  // 移除此行以保持当前页码
-        renderStickers();
-    }
+
 
     function toggleSticker() {
         const p = document.getElementById('sticker-panel');
@@ -13968,33 +14061,11 @@ if __name__ == '__main__':
     
     port = 5000
     
-    # 尝试使用 Waitress WSGI 服务器
-    print('Loading server...')
-    try:
-        from waitress import serve
-        
-        print('')
-        print('LANChat Hub - Server starting...')
-        print(f'CPU cores: {cpu_count}, Threads: {threads}')
-        print(f'Server ready at http://{local_ip}:{port}')
-        print('')
-        
-        # 启动 Waitress 服务器
-        serve(
-            app,
-            host='0.0.0.0',
-            port=port,
-            threads=threads,
-            channel_timeout=120,
-            cleanup_interval=30,
-            asyncore_use_poll=True
-        )
-        
-    except ImportError:
-        # Waitress 未安装，回退到 Flask 开发服务器
-        print('WARNING: Waitress not installed, using Flask dev server')
-        print('For better performance: pip install waitress')
-        print(f'Server ready at http://{local_ip}:{port}')
-        
-        # 使用 Flask 开发服务器
-        app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
+    print('')
+    print('LANChat Hub - Server starting...')
+    print(f'CPU cores: {cpu_count}, Threads: {threads}')
+    print(f'Server ready at http://{local_ip}:{port}')
+    print('')
+
+    # 使用 Flask 开发服务器 (支持 WebSocket)
+    app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
