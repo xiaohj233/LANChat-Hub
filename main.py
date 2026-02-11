@@ -7322,10 +7322,10 @@ HTML_TEMPLATE = """
         .sticker-page-btn:hover:not(:disabled) { opacity: 0.8; transform: scale(1.05); }
         .sticker-page-btn:disabled { opacity: 0.3; cursor: not-allowed; }
         .sticker-page-info { font-size: 12px; color: var(--text-sub); min-width: 40px; text-align: center; }
-        .sticker-item { font-size: 28px; cursor: pointer; text-align: center; padding: 5px; border-radius: 8px; transition: background var(--anim-dur); user-select: none; display: flex; align-items: center; justify-content: center; aspect-ratio: 1; }
+        .sticker-item { font-size: 28px; cursor: pointer; text-align: center; padding: 5px; border-radius: 8px; transition: background var(--anim-dur); user-select: none; display: flex; align-items: center; justify-content: center; height: 50px; }
         .sticker-item:hover { background: rgba(128,128,128,0.15); transform: scale(1.1); }
         .sticker-item img.emoji-img { width: 28px; height: 28px; }
-        .sticker-gif { width: 100%; height: 100%; object-fit: contain; opacity: 0; transition: opacity 0.3s; transform: translateZ(0); }
+        .sticker-gif { width: 40px; height: 40px; object-fit: contain; opacity: 0; transition: opacity 0.3s; transform: translateZ(0); }
         .sticker-gif.loaded { opacity: 1; }
         .sticker-gif:not(.loaded) { background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%); background-size: 200% 100%; animation: loading 1.5s infinite; }
         @keyframes loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
