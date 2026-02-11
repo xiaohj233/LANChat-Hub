@@ -5,6 +5,8 @@
 ![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.7+-green.svg)
 ![Flask](https://img.shields.io/badge/flask-2.0+-orange.svg)
+![Werkzeug](https://img.shields.io/badge/werkzeug-2.0+-orange.svg)
+![Waitress](https://img.shields.io/badge/waitress-2.1+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-brightgreen.svg)
 
 一个功能强大、易于部署的局域网聊天应用，支持 P2P 文件传输、实时消息同步、表情包和贴纸等丰富功能。
@@ -72,7 +74,7 @@
 2. 下载最新版本的压缩包（例如：`LANChat-Hub-v1.0.0-Windows.zip`）
 3. 解压到任意目录
 4. 双击运行 `聊天室.exe`
-5. 浏览器会自动打开聊天界面
+5. 在浏览器输入命令行显示的地址，例如：`http://192.168.1.100:5000`
 
 **注意：** 预编译版本已包含所有必需的依赖和资源文件，无需额外配置。
 
@@ -224,6 +226,7 @@ pyinstaller -F --add-data "static;static" -n "聊天室" main.py
 ### 后端技术栈
 
 - **Web 框架**: Flask 2.0+
+- **WSGI 工具库**: Werkzeug 2.0+
 - **数据库**: SQLite 3（WAL 模式）
 - **WSGI 服务器**: Waitress（生产环境）
 - **文件传输**: WebRTC P2P
@@ -445,6 +448,8 @@ A: 根据你的配置方式，有以下几种重置方法：
 ## 致谢
 
 - Flask 框架团队
+- Werkzeug 工具库
+- Waitress 服务器
 - SQLite 数据库
 - WebRTC 技术社区
 - 所有贡献者和用户
