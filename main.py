@@ -7081,9 +7081,11 @@ HTML_TEMPLATE = """
         .sidebar { background: #1e1e1e; background: var(--bg-sidebar); width: 68px; display: flex; flex-direction: column; align-items: center; padding-top: 30px; flex-shrink: 0; z-index: 10; }
         .avatar-box { width: 44px; height: 44px; border-radius: 14px; margin-bottom: 30px; transition: transform 0.5s; box-shadow: var(--sh-av-ring), var(--sh-av); }
         .avatar-box.spin { animation: spin 0.5s ease-out; }
-        .nav-btn { width: 40px; height: 40px; border-radius: 10px; margin-bottom: 15px; display: flex; justify-content: center; align-items: center; fill: #888; }
+        .nav-btn { width: 40px; height: 40px; border-radius: 10px; margin-bottom: 15px; display: flex; justify-content: center; align-items: center; }
+        .nav-btn svg { width: 24px; height: 24px; fill: #888; transition: fill 0.2s; }
         .nav-btn:hover { background: rgba(255,255,255,0.1); }
-        .nav-btn.active { fill: #007aff; fill: var(--accent); background: rgba(0, 122, 255, 0.15); }
+        .nav-btn.active { background: rgba(0, 122, 255, 0.15); }
+        .nav-btn.active svg { fill: #007aff; fill: var(--accent, #007aff); }
 
         /* FIX BUG 2: IE Fallbacks */
         .list-pane { background: #fff; background: var(--bg-list); width: 260px; border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; backdrop-filter: var(--glass); }
