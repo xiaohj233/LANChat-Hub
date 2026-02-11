@@ -7170,7 +7170,7 @@ HTML_TEMPLATE = """
         /* 优化滚动性能和稳定性 */
         .msg-area { will-change: scroll-position; }
         /* FIX BUG 1: Chrome 60 Flex Squeeze Fix */
-        .msg-row { display: flex; max-width: 80%; opacity: 0; align-items: flex-start; border-radius:8px; transition: background var(--anim-dur); margin-bottom: 10px; min-width: 0; }
+        .msg-row { display: flex; max-width: 80%; opacity: 0; align-items: flex-start; border-radius:8px; transition: background var(--anim-dur); margin-bottom: 10px; min-width: 0; flex-shrink: 0; }
         .msg-row.highlight { animation: flash 1s; }
         .msg-row.anim-in-right { animation: flyInRight 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
         .msg-row.anim-in-left { animation: flyInLeft 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
@@ -7385,7 +7385,8 @@ HTML_TEMPLATE = """
         .m-nav-item.active { color: var(--accent); }
         .m-nav-item svg { width: 24px; height: 24px; margin-bottom: 2px; fill: currentColor; }
 
-        .msg-inner { display: flex; max-width: 100%; align-items: flex-start; }
+        .msg-inner { display: flex; max-width: 100%; align-items: flex-start; flex: 1; min-width: 0; }
+        .msg-inner > div:last-child { flex: 1; min-width: 0; display: block; }
         .msg-inner > .msg-av { margin-right: 10px; }
 
         .msg-row.me .msg-inner { flex-direction: row-reverse; }
