@@ -7388,7 +7388,7 @@ HTML_TEMPLATE = """
         .m-nav-item svg { width: 24px; height: 24px; margin-bottom: 2px; fill: currentColor; }
 
         .msg-inner { display: flex; max-width: 100%; align-items: flex-start; flex: 1; min-width: 0; }
-        .msg-inner > div:last-child { flex: 1; min-width: 0; display: block; }
+        .msg-inner>div:nth-child(2){display:flex;flex-direction:column;align-items:flex-start;min-width:0}.msg-row.me .msg-inner>div:nth-child(2){align-items:flex-end}
         .msg-inner > .msg-av { margin-right: 10px; }
 
         .msg-row.me .msg-inner { flex-direction: row-reverse; }
