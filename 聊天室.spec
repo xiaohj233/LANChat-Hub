@@ -58,8 +58,6 @@ a = Analysis(
         # 加密库（应用使用标准库 hashlib）
         'Crypto',
         'cryptography',
-        # 邮件相关
-        'email',
         # 测试框架
         'test',
         'unittest',
