@@ -18,11 +18,6 @@ import datetime
 import logging
 from flask import Flask, request, jsonify, send_from_directory, render_template_string, g
 
-# DEBUG: Prove file is running
-with open('debug_start.txt', 'w') as f:
-    f.write('Main.py started at ' + str(time.time()))
-
-
 # ================= 密码配置区（请在此处修改密码）=================
 
 # 管理员密码配置
@@ -546,34 +541,26 @@ def serve_sticker_mapping():
 def get_sticker_mapping():
     """新API：明确获取 mapping.json"""
     sticker_dir = os.path.join(get_static_folder(), 'telegram_stickers')
-    print(f"DEBUG: get_sticker_mapping hit. Dir: {sticker_dir}")
     try:
         if not os.path.exists(sticker_dir):
-            print("DEBUG: Sticker dir missing")
             return jsonify({"error": "Sticker directory not found", "path": sticker_dir}), 404
         
         file_path = os.path.join(sticker_dir, 'mapping.json')
-        print(f"DEBUG: File check: {file_path} -> {os.path.exists(file_path)}")
         
         if not os.path.exists(file_path):
-            print("DEBUG: Mapping file missing")
             return jsonify({"error": "Mapping file missing", "path": file_path}), 404
             
         return send_from_directory(sticker_dir, 'mapping.json')
     except Exception as e:
         app.logger.error(f"Error serving mapping.json from API: {e}")
-        print(f"DEBUG: Exception: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/static/telegram_stickers/<path:filename>')
 def serve_sticker_file(filename):
     """强制提供 webp 表情文件"""
     sticker_dir = os.path.join(get_static_folder(), 'telegram_stickers')
-    # 减少日志输出，仅在调试时开启
-    # print(f"[DEBUG] serve_sticker_file: {filename}")
     try:
         if not os.path.exists(os.path.join(sticker_dir, filename)):
-            print(f"[DEBUG] Sticker not found: {filename}")
             return jsonify({"error": "File not found"}), 404
             
         return send_from_directory(sticker_dir, filename)
@@ -648,7 +635,8 @@ def get_db_connection():
     """
     if 'db' not in g:
         # 创建连接，设置 30 秒超时避免永久阻塞
-        g.db = sqlite3.connect(DATABASE_FILE, check_same_thread=False, timeout=30.0)
+        db_path = app.config.get('DATABASE', DATABASE_FILE)
+        g.db = sqlite3.connect(db_path, check_same_thread=False, timeout=30.0)
         g.db.row_factory = sqlite3.Row
         
         # ========== 性能优化 PRAGMA 配置 ==========
@@ -708,7 +696,8 @@ def init_db():
     - 设置内存缓存和内存映射以减少磁盘 I/O
     - 配置超时和自动检查点以优化机械硬盘性能
     """
-    conn = sqlite3.connect(DATABASE_FILE, timeout=30.0)
+    db_path = app.config.get('DATABASE', DATABASE_FILE)
+    conn = sqlite3.connect(db_path, timeout=30.0)
     cursor = conn.cursor()
     
     # ========== 性能优化 PRAGMA 配置 ==========
@@ -791,6 +780,18 @@ def init_db():
             file_hash TEXT,
             transfer_method TEXT DEFAULT 'server',
             p2p_session_id TEXT
+        )
+    ''')
+    
+    # 管理员物理删除日志表：记录被物理删除的消息ID，用于前端展示占位符
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS admin_delete_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            msg_id INTEGER NOT NULL UNIQUE,
+            from_uid TEXT,
+            to_uid TEXT,
+            deleted_at INTEGER,
+            operator_uid TEXT
         )
     ''')
     
@@ -1176,6 +1177,63 @@ def init_db():
             ('group_global', '全员交流群', 'system', 1, 0)
         )
 
+    # ========== 封号系统新增表 ==========
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_devices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            uid TEXT NOT NULL,
+            mac TEXT,
+            ip TEXT,
+            last_seen REAL,
+            UNIQUE(uid, mac)
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS ip_blacklist (
+            ip TEXT PRIMARY KEY,
+            banned_by_uid TEXT,
+            banned_at REAL
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS mac_blacklist (
+            mac TEXT PRIMARY KEY,
+            banned_by_uid TEXT,
+            banned_at REAL
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS admin_audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action_type TEXT NOT NULL,
+            operator_uid TEXT,
+            target TEXT,
+            detail TEXT,
+            timestamp REAL
+        )
+    ''')
+
+    # 迁移：messages 表新增管理员删除相关列
+    for col, definition in [
+        ('is_admin_deleted', 'INTEGER DEFAULT 0'),
+        ('admin_deleted_at', 'REAL'),
+        ('admin_deleted_by', 'TEXT'),
+    ]:
+        try:
+            cursor.execute(f'ALTER TABLE messages ADD COLUMN {col} {definition}')
+        except sqlite3.OperationalError:
+            pass  # 字段已存在
+
+    # 迁移：user_devices 表新增 is_banned 列
+    try:
+        cursor.execute('ALTER TABLE user_devices ADD COLUMN is_banned INTEGER DEFAULT 0')
+    except sqlite3.OperationalError:
+        pass  # 字段已存在
+    # ========== 结束封号系统新增表 ==========
+
     conn.commit()
     conn.close()
 
@@ -1201,12 +1259,15 @@ def generate_session_token():
     return hashlib.sha256(f"{uuid.uuid4()}{time.time()}".encode()).hexdigest()
 
 
-def create_admin_session():
+def create_admin_session(operator_uid=None, ip=None, mac=None):
     """创建管理员会话"""
     token = generate_session_token()
     ADMIN_SESSIONS[token] = {
         'created_at': time.time(),
-        'expires_at': time.time() + ADMIN_SESSION_TIMEOUT
+        'expires_at': time.time() + ADMIN_SESSION_TIMEOUT,
+        'operator_uid': operator_uid,
+        'ip': ip,
+        'mac': mac,
     }
     return token
 
@@ -1256,7 +1317,52 @@ def get_local_ip():
         return "127.0.0.1"
 
 
+def get_mac_for_ip(ip, timeout=1.5):
+    """通过 ARP 查询 IP 对应的 MAC 地址，超时 ≤1.5s。
+    返回 MAC 字符串（如 'aa:bb:cc:dd:ee:ff'），查不到返回 None。
+    可通过 unittest.mock.patch 替换以便测试。
+    """
+    import re as _re
+    import subprocess as _sp
+    try:
+        result = _sp.run(
+            ['arp', '-a', ip],
+            capture_output=True, text=True, timeout=timeout
+        )
+        # Windows: "  192.168.1.1          aa-bb-cc-dd-ee-ff     动态"
+        # Linux:   "? (192.168.1.1) at aa:bb:cc:dd:ee:ff [ether]"
+        mac_pattern = _re.compile(
+            r'([0-9a-fA-F]{2}[:\-][0-9a-fA-F]{2}[:\-][0-9a-fA-F]{2}'
+            r'[:\-][0-9a-fA-F]{2}[:\-][0-9a-fA-F]{2}[:\-][0-9a-fA-F]{2})'
+        )
+        m = mac_pattern.search(result.stdout)
+        if m:
+            return m.group(1).replace('-', ':').lower()
+    except Exception:
+        pass
+    return None
+
+
 # ================= 辅助函数 =================
+
+
+def write_audit_log(action_type, operator_uid=None, target=None, detail=None):
+    """写入管理员审计日志（只写不读，不保存被操作消息原文）。
+    action_type: 操作类型字符串，如 'delete_message', 'ban_user', 'ban_ip', 'ban_mac', 'unban'
+    operator_uid: 操作者 uid
+    target: 操作对象（uid / ip / mac / message_id 等）
+    detail: 附加说明（不含消息原文）
+    """
+    try:
+        conn = get_db_connection()
+        conn.execute(
+            'INSERT INTO admin_audit_log (action_type, operator_uid, target, detail, timestamp) VALUES (?,?,?,?,?)',
+            (action_type, operator_uid, target, detail, time.time())
+        )
+        conn.commit()
+    except Exception as e:
+        logger.error(f"write_audit_log failed: {e}")
+
 
 def generate_kaleidoscope_avatar():
     palettes = [
@@ -2366,6 +2472,16 @@ def login():
 
     try:
         conn = get_db_connection()
+        client_ip = request.remote_addr
+
+        # 检查 IP 封禁（设备级，无需知道用户身份）
+        if conn.execute('SELECT 1 FROM ip_blacklist WHERE ip=?', (client_ip,)).fetchone():
+            return jsonify({'error': '您的 IP 已被封禁，无法登录'}), 403
+
+        # 检查 MAC 封禁（设备级）
+        client_mac = get_mac_for_ip(client_ip)
+        if client_mac and conn.execute('SELECT 1 FROM mac_blacklist WHERE mac=?', (client_mac,)).fetchone():
+            return jsonify({'error': '您的设备已被封禁，无法登录'}), 403
 
         # 查找用户
         user = conn.execute(
@@ -2377,6 +2493,7 @@ def login():
             if user['deleted']:
                 return jsonify({'error': '该账户已被禁用，无法登录'}), 403
 
+            # 先验证密码
             stored_pwd = user['password']
             if stored_pwd:
                 if stored_pwd != hash_pwd(password):
@@ -2384,6 +2501,16 @@ def login():
             else:
                 conn.execute(
                     'UPDATE users SET password = ? WHERE uid = ?', (hash_pwd(password), uid))
+
+            # 密码正确后再检查账号封禁；若封禁且有新 MAC，自动封该 MAC
+            if conn.execute('SELECT 1 FROM user_devices WHERE uid=? AND is_banned=1', (uid,)).fetchone():
+                if client_mac:
+                    try:
+                        conn.execute('INSERT OR IGNORE INTO mac_blacklist (mac) VALUES (?)', (client_mac,))
+                        conn.commit()
+                    except Exception:
+                        pass
+                return jsonify({'error': '该账号已被封禁，无法登录'}), 403
 
             # 更新最后活跃时间
             conn.execute(
@@ -2399,6 +2526,12 @@ def login():
                 'INSERT INTO users (uid, name, password, avatar_bg, last_active, registered_at) VALUES (?, ?, ?, ?, ?, ?)',
                 (uid, nickname, hash_pwd(password), avatar_bg, current_time, current_time)
             )
+
+        # 记录/更新设备信息（IP + MAC）
+        conn.execute(
+            'INSERT OR REPLACE INTO user_devices (uid, ip, mac, last_seen) VALUES (?,?,?,?)',
+            (uid, client_ip, client_mac, time.time())
+        )
 
         # 确保用户在全员群中
         member = conn.execute(
@@ -2708,6 +2841,7 @@ def sync():
 
     relevant_msgs = []
     recalled_ids = []
+    admin_deleted_ids = []
     last_synced_id = current_max_id  # 默认返回当前最大ID
 
     # ============ 条件性消息查询 ============
@@ -2743,6 +2877,10 @@ def sync():
             if msg_dict['is_recalled']:
                 # 类型安全：撤回 ID 也转换为 String
                 recalled_ids.append(msg_dict['id'])
+
+            if msg_dict['is_admin_deleted']:
+                # 类型安全：管理员删除 ID 也转换为 String
+                admin_deleted_ids.append(msg_dict['id'])
 
             # 检查权限
             has_perm = False
@@ -3008,6 +3146,34 @@ def sync():
                 recalled_ids.append(msg_id_str)
                 existing_recalled_set.add(msg_id_str)
 
+    # ============ 修复：独立查询最近被管理员物理删除的消息 ID（从日志表读取） ============
+    if last_msg_id > 0:
+        # 查询最近50条最近被管理员删除的消息（消息已物理删除，从 admin_delete_log 读取）
+        recently_deleted = conn.execute(
+            '''SELECT msg_id, from_uid, to_uid FROM admin_delete_log 
+               ORDER BY id DESC LIMIT 50'''
+        ).fetchall()
+
+        # 过滤出用户有权限查看的已删除消息，并去重合并
+        existing_deleted_set = set(admin_deleted_ids)
+        for dm in recently_deleted:
+            # 类型安全：转换为 String
+            msg_id_str = str(dm['msg_id'])
+            # 检查权限
+            to_id = dm['to_uid']
+            has_perm = False
+            if to_id == uid or dm['from_uid'] == uid:
+                has_perm = True
+            elif to_id == 'group_global':
+                has_perm = True
+            elif to_id in my_groups:
+                has_perm = True
+
+            # 有权限且未在列表中，则添加
+            if has_perm and msg_id_str not in existing_deleted_set:
+                admin_deleted_ids.append(msg_id_str)
+                existing_deleted_set.add(msg_id_str)
+
     # ============ 版本控制：检测用户信息变更 ============
     # 修复"幽灵用户"漏洞：移除 WHERE deleted = 0，确保被删除用户也能同步
     changed_users = {}
@@ -3215,6 +3381,7 @@ def sync():
     return jsonify({
         'messages': relevant_msgs,
         'recalled_ids': recalled_ids,
+        'admin_deleted_ids': admin_deleted_ids,
         'users': online_users,
         'groups': my_groups,
         'read_markers': read_markers_snapshot,
@@ -4168,6 +4335,30 @@ def get_history():
     has_more_result = len(rows) > limit
     if has_more_result:
         rows = rows[:limit]
+
+    # 注入当前聊天中可能不在最近N条内的墓碑消息（is_admin_deleted=1）
+    # 确保管理员删除的占位符消息在刷新页面后仍然可见
+    # 在 has_more 截断后注入，避免推挤真实消息
+    if not use_after:
+        existing_ids = set(r['id'] for r in rows)
+        if chat_type == 'group':
+            tombstone_rows = conn.execute(
+                'SELECT * FROM messages WHERE is_admin_deleted = 1 AND to_uid = ? ORDER BY id DESC LIMIT 10',
+                (chat_id,)
+            ).fetchall()
+        else:
+            tombstone_rows = conn.execute(
+                '''SELECT * FROM messages WHERE is_admin_deleted = 1 AND 
+                   ((from_uid = ? AND to_uid = ?) OR (from_uid = ? AND to_uid = ?))
+                   ORDER BY id DESC LIMIT 10''',
+                (uid, chat_id, chat_id, uid)
+            ).fetchall()
+        for t in tombstone_rows:
+            if t['id'] not in existing_ids:
+                rows.append(t)
+                existing_ids.add(t['id'])
+        # 重新按 id 降序排列
+        rows.sort(key=lambda r: r['id'], reverse=True)
 
     # 获取访问边界信息
     boundary_info = get_access_boundary_info(uid, chat_id, chat_type)
@@ -6486,7 +6677,9 @@ def admin_auth():
         return jsonify({'error': 'Access Denied'}), 403
 
     # 生成会话 token
-    token = create_admin_session()
+    operator_uid = request.json.get('operator_uid')
+    ip = request.remote_addr
+    token = create_admin_session(operator_uid=operator_uid, ip=ip, mac=None)
     return jsonify({'status': 'ok', 'token': token, 'expires_in': ADMIN_SESSION_TIMEOUT})
 
 
@@ -6594,6 +6787,231 @@ def delete_account():
         'status': 'ok',
         'message': f'账户 {old_name} (UID: {target_uid}) 已成功删除，所有会话已终止'
     })
+
+
+@app.route('/api/admin/delete_message', methods=['POST'])
+def admin_delete_message():
+    """管理员物理删除消息，并记录删除日志以供前端展示占位符"""
+    token = request.json.get('token')
+    if not validate_admin_session(token):
+        return jsonify({'error': 'Session expired or invalid'}), 403
+
+    msg_id = request.json.get('message_id') or request.json.get('msg_id')
+    if not msg_id:
+        return jsonify({'error': '缺少 message_id'}), 400
+
+    conn = get_db_connection()
+    msg = conn.execute('SELECT id, from_uid, to_uid FROM messages WHERE id = ?', (msg_id,)).fetchone()
+    if not msg:
+        return jsonify({'error': '消息不存在'}), 404
+
+    operator_uid = ADMIN_SESSIONS[token].get('operator_uid')
+
+    # 先记录删除日志（用于实时同步推送 admin_deleted_ids）
+    conn.execute(
+        'INSERT OR IGNORE INTO admin_delete_log (msg_id, from_uid, to_uid, deleted_at, operator_uid) VALUES (?, ?, ?, ?, ?)',
+        (msg_id, msg['from_uid'], msg['to_uid'], int(time.time()), operator_uid)
+    )
+
+    # 物理删除原消息
+    conn.execute('DELETE FROM messages WHERE id=?', (msg_id,))
+
+    # 插入占位符消息到数据库（持久化，刷新页面后仍显示"此消息已被管理员删除"）
+    conn.execute(
+        '''INSERT INTO messages (id, from_uid, to_uid, type, content, timestamp, is_admin_deleted)
+           VALUES (?, ?, ?, 'text', '此消息已被管理员删除', ?, 1)''',
+        (msg_id, msg['from_uid'], msg['to_uid'], int(time.time()))
+    )
+    conn.commit()
+
+    write_audit_log(
+        action_type='delete_message',
+        operator_uid=operator_uid,
+        target=str(msg_id),
+        detail=f'from_uid={msg["from_uid"]}'
+    )
+
+    return jsonify({'status': 'ok'})
+
+
+@app.route('/api/admin/ban', methods=['POST'])
+def admin_ban():
+    """封禁账号/IP/MAC，并立即踢出在线会话"""
+    token = request.json.get('token')
+    if not validate_admin_session(token):
+        return jsonify({'error': 'Session expired or invalid'}), 403
+
+    ban_type = request.json.get('type')   # 'uid' | 'ip' | 'mac'
+    target = request.json.get('target')   # 对应的值
+    if not ban_type or not target:
+        return jsonify({'error': '缺少 type 或 target'}), 400
+
+    # 保护：loopback / 服务器自身 IP 不可封
+    PROTECTED_IPS = {'127.0.0.1', '::1', '0.0.0.0'}
+    try:
+        local_ip = get_local_ip()
+        PROTECTED_IPS.add(local_ip)
+    except Exception:
+        pass
+
+    operator_uid = ADMIN_SESSIONS[token].get('operator_uid')
+    conn = get_db_connection()
+    now = time.time()
+
+    if ban_type == 'ip':
+        if target in PROTECTED_IPS:
+            return jsonify({'error': '不能封禁该 IP'}), 400
+        conn.execute(
+            'INSERT OR REPLACE INTO ip_blacklist (ip, banned_by_uid, banned_at) VALUES (?,?,?)',
+            (target, operator_uid, now)
+        )
+        # 踢出该 IP 的所有在线用户
+        rows = conn.execute('SELECT uid FROM user_devices WHERE ip=?', (target,)).fetchall()
+        for row in rows:
+            _kick_user(conn, row['uid'])
+    elif ban_type == 'mac':
+        conn.execute(
+            'INSERT OR REPLACE INTO mac_blacklist (mac, banned_by_uid, banned_at) VALUES (?,?,?)',
+            (target, operator_uid, now)
+        )
+        rows = conn.execute('SELECT uid FROM user_devices WHERE mac=?', (target,)).fetchall()
+        for row in rows:
+            _kick_user(conn, row['uid'])
+    elif ban_type == 'uid':
+        # 先尝试更新已有记录，若不存在则插入一条占位记录
+        updated = conn.execute(
+            'UPDATE user_devices SET is_banned=1 WHERE uid=?', (target,)
+        ).rowcount
+        if updated == 0:
+            conn.execute(
+                'INSERT OR IGNORE INTO user_devices (uid, is_banned, last_seen) VALUES (?,1,?)',
+                (target, now)
+            )
+        _kick_user(conn, target)
+
+        # 附加封禁：同时封该用户已知的 IP 和/或 MAC
+        also_ban_ip = request.json.get('also_ban_ip', False)
+        also_ban_mac = request.json.get('also_ban_mac', False)
+        if also_ban_ip or also_ban_mac:
+            devices = conn.execute(
+                'SELECT ip, mac FROM user_devices WHERE uid=?', (target,)
+            ).fetchall()
+            for dev in devices:
+                if also_ban_ip and dev['ip'] and dev['ip'] not in PROTECTED_IPS:
+                    conn.execute(
+                        'INSERT OR IGNORE INTO ip_blacklist (ip, banned_by_uid, banned_at) VALUES (?,?,?)',
+                        (dev['ip'], operator_uid, now)
+                    )
+                if also_ban_mac and dev['mac']:
+                    conn.execute(
+                        'INSERT OR IGNORE INTO mac_blacklist (mac, banned_by_uid, banned_at) VALUES (?,?,?)',
+                        (dev['mac'], operator_uid, now)
+                    )
+    else:
+        return jsonify({'error': '无效的 type'}), 400
+
+    conn.commit()
+    write_audit_log('ban_' + ban_type, operator_uid=operator_uid, target=target)
+    return jsonify({'status': 'ok'})
+
+
+@app.route('/api/admin/unban', methods=['POST'])
+def admin_unban():
+    """解封账号/IP/MAC"""
+    token = request.json.get('token')
+    if not validate_admin_session(token):
+        return jsonify({'error': 'Session expired or invalid'}), 403
+
+    ban_type = request.json.get('type')
+    target = request.json.get('target')
+    if not ban_type or not target:
+        return jsonify({'error': '缺少 type 或 target'}), 400
+
+    operator_uid = ADMIN_SESSIONS[token].get('operator_uid')
+    conn = get_db_connection()
+
+    if ban_type == 'ip':
+        conn.execute('DELETE FROM ip_blacklist WHERE ip=?', (target,))
+    elif ban_type == 'mac':
+        conn.execute('DELETE FROM mac_blacklist WHERE mac=?', (target,))
+    elif ban_type == 'uid':
+        conn.execute('UPDATE user_devices SET is_banned=0 WHERE uid=?', (target,))
+    else:
+        return jsonify({'error': '无效的 type'}), 400
+
+    conn.commit()
+    write_audit_log('unban_' + ban_type, operator_uid=operator_uid, target=target)
+    return jsonify({'status': 'ok'})
+
+
+@app.route('/api/admin/user_devices', methods=['POST'])
+def admin_user_devices():
+    """查询某用户的已知设备（IP/MAC），供封禁确认框使用"""
+    token = request.json.get('token')
+    if not validate_admin_session(token):
+        return jsonify({'error': 'Session expired or invalid'}), 403
+    uid = request.json.get('uid')
+    if not uid:
+        return jsonify({'error': '缺少 uid'}), 400
+    conn = get_db_connection()
+    rows = conn.execute(
+        'SELECT ip, mac FROM user_devices WHERE uid=? AND (ip IS NOT NULL OR mac IS NOT NULL)',
+        (uid,)
+    ).fetchall()
+    return jsonify({'devices': [dict(r) for r in rows]})
+
+
+@app.route('/api/admin/ban/list', methods=['POST'])
+def admin_ban_list():
+    """获取封禁列表（uid/ip/mac）"""
+    token = request.json.get('token')
+    if not validate_admin_session(token):
+        return jsonify({'error': 'Session expired or invalid'}), 403
+
+    conn = get_db_connection()
+    banned_uids = [dict(r) for r in conn.execute(
+        'SELECT DISTINCT ud.uid, u.name FROM user_devices ud LEFT JOIN users u ON ud.uid=u.uid WHERE ud.is_banned=1'
+    ).fetchall()]
+    banned_ips = [r['ip'] for r in conn.execute('SELECT ip FROM ip_blacklist').fetchall()]
+    banned_macs = [r['mac'] for r in conn.execute('SELECT mac FROM mac_blacklist').fetchall()]
+    return jsonify({'uids': banned_uids, 'ips': banned_ips, 'macs': banned_macs})
+
+
+@app.route('/api/admin/messages', methods=['POST'])
+def admin_messages():
+    """获取消息列表（支持关键词搜索）"""
+    token = request.json.get('token')
+    if not validate_admin_session(token):
+        return jsonify({'error': 'Session expired or invalid'}), 403
+
+    keyword = request.json.get('keyword', '')
+    conn = get_db_connection()
+    if keyword:
+        rows = conn.execute(
+            '''SELECT m.id, m.from_uid, u.name as sender_name, m.content, m.timestamp, m.is_admin_deleted
+               FROM messages m LEFT JOIN users u ON m.from_uid=u.uid
+               WHERE (m.content LIKE ? OR u.name LIKE ?) AND m.type NOT IN ('system','file')
+               ORDER BY m.timestamp DESC LIMIT 100''',
+            (f'%{keyword}%', f'%{keyword}%')
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            '''SELECT m.id, m.from_uid, u.name as sender_name, m.content, m.timestamp, m.is_admin_deleted
+               FROM messages m LEFT JOIN users u ON m.from_uid=u.uid
+               WHERE m.type NOT IN ('system','file')
+               ORDER BY m.timestamp DESC LIMIT 100'''
+        ).fetchall()
+    return jsonify({'messages': [dict(r) for r in rows]})
+
+
+def _kick_user(conn, uid):
+    """立即踢出用户：标记 session_invalidated（客户端轮询时会检测到并强制下线）"""
+    conn.execute(
+        'UPDATE users SET session_invalidated=1, session_invalidated_at=? WHERE uid=?',
+        (time.time(), uid)
+    )
+    # 从内存活跃会话缓存移除
+    ACTIVE_USER_SESSIONS.pop(uid, None)
 
 
 @app.route('/api/admin/merge_accounts', methods=['POST'])
@@ -7835,14 +8253,16 @@ HTML_TEMPLATE = """
         </div>
         <div style="padding:10px 0; border-bottom:1px solid #333; margin-bottom:10px;">
             <div style="display:flex; gap:10px;">
-                <button class="btn-block clickable" style="flex:1; background:#30d158; margin:0; padding:10px; font-size:13px;" onclick="showAccessControlSection()">🔓 访问控制</button>
-                <button class="btn-block clickable" style="flex:1; background:#ff3b30; margin:0; padding:10px; font-size:13px;" onclick="showDeleteAccountSection()">🗑️ 删除账户</button>
-                <button class="btn-block clickable" style="flex:1; background:#007aff; margin:0; padding:10px; font-size:13px;" onclick="showMergeAccountSection()">🔗 合并账户</button>
+                <button id="admin-tab-access" class="btn-block clickable" style="flex:1; background:#30d158; margin:0; padding:10px; font-size:13px;" onclick="showAdminSection('access')">🔓 访问控制</button>
+                <button id="admin-tab-delete" class="btn-block clickable" style="flex:1; background:#ff3b30; margin:0; padding:10px; font-size:13px;" onclick="showAdminSection('delete')">🗑️ 删除账户</button>
+                <button id="admin-tab-merge" class="btn-block clickable" style="flex:1; background:#007aff; margin:0; padding:10px; font-size:13px;" onclick="showAdminSection('merge')">🔗 合并账户</button>
+                <button id="admin-tab-ban" class="btn-block clickable" style="flex:1; background:#ff6b00; margin:0; padding:10px; font-size:13px;" onclick="showAdminSection('ban')">🚫 封号管理</button>
+                <button id="admin-tab-msg" class="btn-block clickable" style="flex:1; background:#8e44ad; margin:0; padding:10px; font-size:13px;" onclick="showAdminSection('msg')">🗑️ 消息管理</button>
             </div>
         </div>
         
         <!-- 访问控制区域 -->
-        <div id="access-control-section" style="display:none; flex:1; overflow-y:auto;">
+        <div id="access-control-section" style="display:none; flex:1; flex-direction:column; width:100%; overflow:hidden;">
             <div style="background:#1a1a1a; padding:12px; border-radius:8px; margin-bottom:10px; border-left:3px solid #30d158;">
                 <div style="color:#30d158; font-weight:600; margin-bottom:5px;">🔓 无限制访问说明</div>
                 <div style="font-size:12px; color:#999; line-height:1.5;">
@@ -7851,16 +8271,16 @@ HTML_TEMPLATE = """
                     • 可以单独为某个用户启用，也可以批量为所有用户启用
                 </div>
             </div>
-            <div style="display:flex; gap:10px; margin-bottom:15px;">
-                <button class="btn-block clickable" style="flex:1; background:#30d158; margin:0; padding:10px; font-size:12px;" onclick="batchToggleAccess(true)">✅ 批量启用所有用户</button>
-                <button class="btn-block clickable" style="flex:1; background:#ff9500; margin:0; padding:10px; font-size:12px;" onclick="batchToggleAccess(false)">❌ 批量禁用所有用户</button>
+            <div style="display:flex; gap:10px; margin-bottom:15px; align-items:flex-start;">
+                <button class="btn-block clickable" style="flex:1; background:#30d158; margin:0; padding:10px 16px; font-size:12px; height:auto; align-self:flex-start;" onclick="batchToggleAccess(true)">✅ 批量启用所有用户</button>
+                <button class="btn-block clickable" style="flex:1; background:#ff9500; margin:0; padding:10px 16px; font-size:12px; height:auto; align-self:flex-start;" onclick="batchToggleAccess(false)">❌ 批量禁用所有用户</button>
             </div>
             <div style="color:#888; font-size:12px; margin-bottom:8px;">单独管理用户访问权限：</div>
-            <div id="access-control-list" style="flex:1; overflow-y:auto; max-height:300px; background:#1a1a1a; border-radius:8px; padding:5px;"></div>
+            <div id="access-control-list" style="flex:1; overflow-y:auto; background:#1a1a1a; border-radius:8px; padding:5px; min-height:0;"></div>
         </div>
         
         <!-- 删除账户区域 -->
-        <div id="delete-account-section" style="display:none; flex:1; overflow-y:auto;">
+        <div id="delete-account-section" style="display:none; flex:1; flex-direction:column; width:100%; overflow:hidden;">
             <div style="background:#1a1a1a; padding:12px; border-radius:8px; margin-bottom:10px; border-left:3px solid #ff3b30;">
                 <div style="color:#ff3b30; font-weight:600; margin-bottom:5px;">⚠️ 删除账户说明</div>
                 <div style="font-size:12px; color:#999; line-height:1.5;">
@@ -7871,14 +8291,14 @@ HTML_TEMPLATE = """
                 </div>
             </div>
             <div style="color:#888; font-size:12px; margin-bottom:8px;">选择要删除的账户：</div>
-            <div id="delete-account-list" style="flex:1; overflow-y:auto; max-height:250px; background:#1a1a1a; border-radius:8px; padding:5px;"></div>
+            <div id="delete-account-list" style="flex:1; overflow-y:auto; background:#1a1a1a; border-radius:8px; padding:5px; min-height:0;"></div>
             <div style="margin-top:15px;">
-                <button class="btn-block clickable" style="background:#ff3b30;" onclick="confirmDeleteAccount()">确认删除选中账户</button>
+                <button class="btn-block clickable" style="background:#ff3b30; width:100%; box-sizing:border-box;" onclick="confirmDeleteAccount()">确认删除选中账户</button>
             </div>
         </div>
         
         <!-- 合并账户区域 -->
-        <div id="merge-account-section" style="display:none; flex:1; overflow-y:auto;">
+        <div id="merge-account-section" style="display:none; flex:1; flex-direction:column; width:100%; overflow:hidden;">
             <div style="background:#1a1a1a; padding:12px; border-radius:8px; margin-bottom:10px; border-left:3px solid #007aff;">
                 <div style="color:#007aff; font-weight:600; margin-bottom:5px;">🔗 合并账户说明</div>
                 <div style="font-size:12px; color:#999; line-height:1.5;">
@@ -7904,13 +8324,97 @@ HTML_TEMPLATE = """
                 <div id="merge-preview-content" style="font-size:13px; color:#ddd; margin-top:5px;"></div>
             </div>
             <div style="margin-top:15px;">
-                <button class="btn-block clickable" style="background:#007aff;" onclick="confirmMergeAccounts()">确认合并账户</button>
+                <button class="btn-block clickable" style="background:#007aff; width:100%; box-sizing:border-box;" onclick="confirmMergeAccounts()">确认合并账户</button>
             </div>
+        </div>
+        
+        <!-- 封号管理区域 -->
+        <div id="admin-section-ban" style="display:none; flex:1; flex-direction:column; width:100%; overflow:hidden;">
+            <div style="padding:10px 0; border-bottom:1px solid #333; margin-bottom:10px;">
+                <div style="display:flex; gap:10px;">
+                    <button id="ban-tab-uid" class="btn-block clickable" style="flex:1; background:#ff3b30; margin:0; padding:8px; font-size:12px; white-space:nowrap; min-width:80px;" onclick="showBanSection('uid')">👤 账号封禁</button>
+                    <button id="ban-tab-ip" class="btn-block clickable" style="flex:1; background:#444; margin:0; padding:8px; font-size:12px; white-space:nowrap; min-width:80px;" onclick="showBanSection('ip')">🌐 IP 封禁</button>
+                    <button id="ban-tab-mac" class="btn-block clickable" style="flex:1; background:#444; margin:0; padding:8px; font-size:12px; white-space:nowrap; min-width:80px;" onclick="showBanSection('mac')">💻 MAC 封禁</button>
+                </div>
+            </div>
+            <!-- 账号封禁 -->
+            <div id="ban-section-uid" style="flex:1; overflow:hidden; min-height:0;">
+                <div style="display:flex; gap:10px; margin-bottom:10px;">
+                    <input id="ban-uid-input" class="modal-inp" style="flex:1; margin:0;" placeholder="输入用户 UID">
+                    <button class="btn-block clickable" style="width:80px; flex-shrink:0; margin:0; background:#ff3b30; padding:10px;" onclick="doBan('uid')">封禁</button>
+                </div>
+                <div style="color:#888; font-size:12px; margin-bottom:8px;">已封禁账号列表：</div>
+                <div id="ban-uid-list" style="flex:1; overflow-y:auto; min-height:0; background:#1a1a1a; border-radius:8px; padding:5px;"></div>
+            </div>
+            <!-- IP 封禁 -->
+            <div id="ban-section-ip" style="display:none; flex:1; overflow:hidden; min-height:0;">
+                <div style="display:flex; gap:10px; margin-bottom:10px;">
+                    <input id="ban-ip-input" class="modal-inp" style="flex:1; margin:0;" placeholder="输入 IP 地址">
+                    <button class="btn-block clickable" style="width:80px; flex-shrink:0; margin:0; background:#ff3b30; padding:10px;" onclick="doBan('ip')">封禁</button>
+                </div>
+                <div style="color:#888; font-size:12px; margin-bottom:8px;">已封禁 IP 列表：</div>
+                <div id="ban-ip-list" style="flex:1; overflow-y:auto; min-height:0; background:#1a1a1a; border-radius:8px; padding:5px;"></div>
+            </div>
+            <!-- MAC 封禁 -->
+            <div id="ban-section-mac" style="display:none; flex:1; overflow:hidden; min-height:0;">
+                <div style="display:flex; gap:10px; margin-bottom:10px;">
+                    <input id="ban-mac-input" class="modal-inp" style="flex:1; margin:0;" placeholder="输入 MAC 地址 (xx:xx:xx:xx:xx:xx)">
+                    <button class="btn-block clickable" style="width:80px; flex-shrink:0; margin:0; background:#ff3b30; padding:10px;" onclick="doBan('mac')">封禁</button>
+                </div>
+                <div style="color:#888; font-size:12px; margin-bottom:8px;">已封禁 MAC 列表：</div>
+                <div id="ban-mac-list" style="flex:1; overflow-y:auto; min-height:0; background:#1a1a1a; border-radius:8px; padding:5px;"></div>
+            </div>
+        </div>
+        
+        <!-- 消息管理区域 -->
+        <div id="admin-section-msg" style="display:none; flex:1; flex-direction:column; width:100%; overflow:hidden;">
+            <div style="display:flex; gap:10px; margin-bottom:10px; align-items:center;">
+                <input id="msg-search-input" class="modal-inp" style="flex:1; margin:0;" placeholder="搜索消息内容或发送者昵称">
+                <button class="btn-block clickable" style="width:80px; flex-shrink:0; margin:0; background:#ff9500; padding:10px;" onclick="loadAdminMessages()">搜索</button>
+            </div>
+            <div style="display:flex; gap:10px; margin-bottom:10px; align-items:center;">
+                <label style="font-size:12px; color:#888; cursor:pointer;">
+                    <input type="checkbox" id="msg-select-all" onchange="toggleSelectAllMsgs(this.checked)" style="margin-right:5px;">全选
+                </label>
+                <button class="btn-block clickable" style="width:120px; flex-shrink:0; margin:0; background:#ff3b30; padding:8px; font-size:12px;" onclick="deleteSelectedMsgs()">删除选中消息</button>
+                <span id="msg-selected-count" style="font-size:12px; color:#888;">已选 0 条</span>
+            </div>
+            <div id="admin-msg-list" style="flex:1; overflow-y:auto; background:#1a1a1a; border-radius:8px; padding:5px; min-height:0;"></div>
         </div>
         
         <div style="text-align:center; margin-top:15px; font-size:12px; cursor:pointer; color:#666;" onclick="closeMd('md-account-panel')">关闭面板</div>
     </div>
 </div>
+
+
+
+<!-- 封禁附加选项确认框 -->
+<div id="md-ban-confirm" class="modal-bg" style="backdrop-filter:var(--glass);background:rgba(0,0,0,0.9);display:none;z-index:9999;">
+    <div class="modal-box" style="width:420px;max-width:95%;background:#111;border:1px solid #444;color:#ddd;">
+        <div class="modal-h" style="color:#ff3b30;font-size:16px;">🚫 封禁成功 — 附加选项</div>
+        <div style="font-size:13px;color:#aaa;margin-bottom:12px;">账号已封禁并踢出。是否同时封禁该用户的设备？</div>
+        <div id="ban-confirm-devices" style="font-size:12px;color:#888;margin-bottom:12px;padding:8px;background:#1a1a1a;border-radius:6px;min-height:30px;"></div>
+        <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer;font-size:13px;">
+            <input type="checkbox" id="ban-confirm-ip" style="width:16px;height:16px;">
+            <span>同时封禁该账号已知的 <strong>IP 地址</strong></span>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer;font-size:13px;">
+            <input type="checkbox" id="ban-confirm-mac" style="width:16px;height:16px;">
+            <span>同时封禁该账号已知的 <strong>MAC 地址</strong>（设备）</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;margin-bottom:16px;cursor:pointer;font-size:13px;">
+            <input type="checkbox" id="ban-confirm-future-mac" checked style="width:16px;height:16px;">
+            <span>自动封禁该账号<strong>后续登录</strong>时使用的新 MAC 地址</span>
+        </label>
+        <div style="font-size:11px;color:#666;margin-bottom:14px;">注：「自动封禁后续 MAC」已默认启用（被封账号从新设备登录时自动追封）。取消勾选不会立即生效，需手动修改服务端配置。</div>
+        <div style="display:flex;gap:10px;">
+            <button class="btn-block clickable" style="flex:1;background:#ff3b30;margin:0;padding:10px;" onclick="confirmBanExtra()">确认</button>
+            <button class="btn-block clickable" style="flex:1;background:#444;margin:0;padding:10px;" onclick="document.getElementById('md-ban-confirm').style.display='none'">跳过</button>
+        </div>
+    </div>
+</div>
+
+
 
 <!-- Old P2P UI elements removed - now using message-based interface -->
 
@@ -9622,7 +10126,7 @@ HTML_TEMPLATE = """
         
         // 生成新的 DOM 元素
         var newEl;
-        if(localMsg.type === 'system' || localMsg.is_recalled) {
+        if(localMsg.type === 'system' || localMsg.is_recalled || localMsg.is_admin_deleted) {
             newEl = renderSystemMsg(localMsg);
         } else {
             newEl = renderMessageElement(localMsg, false);
@@ -9648,6 +10152,7 @@ HTML_TEMPLATE = """
         // 检测关键属性变化
         return (
             oldMsg.is_recalled !== newMsg.is_recalled ||      // 撤回状态
+            oldMsg.is_admin_deleted !== newMsg.is_admin_deleted || // 管理员删除状态
             oldMsg.content !== newMsg.content ||              // 内容变化
             oldMsg.type !== newMsg.type ||                    // 类型变化
             oldMsg.server_filename !== newMsg.server_filename || // 文件名变化
@@ -9692,6 +10197,49 @@ HTML_TEMPLATE = """
                 var qEl = document.querySelector('#msg-' + String(m.id) + ' .quote-box');
                 if(qEl) {
                     qEl.innerHTML = '<div class="q-txt quote-recalled">原消息已被撤回</div>';
+                    qEl.onclick = null;
+                }
+            }
+        });
+        
+        // 更新侧边栏预览
+        updateListUI();
+    }
+    
+    /**
+     * 处理管理员删除消息 - 统一更新数据和 DOM
+     * SQLite 修复：统一使用 String 类型进行比较，避免 Integer vs String 类型不匹配
+     * @param {number|string} msgId - 被删除的消息 ID
+     */
+    function handleAdminDeletedMessage(msgId) {
+        // SQLite 修复：统一转换为 String 进行比较
+        var targetId = String(msgId);
+        
+        // 更新本地消息数据
+        var localIdx = currentChatMsgs.findIndex(function(m) {
+            return String(m.id) === targetId;
+        });
+        if(localIdx !== -1) {
+            currentChatMsgs[localIdx].is_admin_deleted = true;
+        }
+        
+        // 更新 DOM
+        var el = document.getElementById('msg-' + targetId);
+        if(el && !el.classList.contains('sys')) {
+            var localMsg = localIdx !== -1 ? currentChatMsgs[localIdx] : {id: msgId, is_admin_deleted: true};
+            var newEl = renderSystemMsg(localMsg);
+            if(newEl) {
+                el.outerHTML = newEl.outerHTML;
+            }
+        }
+        
+        // 更新引用了该消息的其他消息
+        currentChatMsgs.forEach(function(m) {
+            if(m.quote && String(m.quote.id) === targetId) {
+                m.quote.is_admin_deleted = true;
+                var qEl = document.querySelector('#msg-' + String(m.id) + ' .quote-box');
+                if(qEl) {
+                    qEl.innerHTML = '<div class="q-txt quote-recalled">此消息已被管理员删除</div>';
                     qEl.onclick = null;
                 }
             }
@@ -9931,6 +10479,12 @@ HTML_TEMPLATE = """
                 d.recalled_ids.forEach(function(rid) {
                     // SQLite 修复：将撤回 ID 统一转换为 String 后处理
                     handleMessageRecall(String(rid));
+                });
+            }
+
+            if (d.admin_deleted_ids && d.admin_deleted_ids.length > 0) {
+                d.admin_deleted_ids.forEach(function(did) {
+                    handleAdminDeletedMessage(String(did));
                 });
             }
 
@@ -11216,7 +11770,7 @@ HTML_TEMPLATE = """
             
             // 渲染消息
             let div;
-            if(m.type === 'system' || m.is_recalled) {
+            if(m.type === 'system' || m.is_recalled || m.is_admin_deleted) {
                 div = renderSystemMsg(m);
             } else {
                 div = renderMessageElement(m, false);
@@ -11322,6 +11876,8 @@ HTML_TEMPLATE = """
             var nick = getName(m.from_uid);
             if(m.from_uid === me.uid) nick = '你';
             txt = nick + " 撤回了一条消息";
+        } else if (m.is_admin_deleted) {
+            txt = "此消息已被管理员删除";
         } else {
             txt = getSysText(m);
         }
@@ -11427,11 +11983,11 @@ HTML_TEMPLATE = """
 
         var quoteHtml = '';
         if(m.quote) {
-            var qContent = m.quote.content;
+            var qContent = m.quote.content ? escapeHtml(m.quote.content) : '';
             if(m.quote.is_recalled) qContent = '<span class="quote-recalled">原消息已被撤回</span>';
             var qJumpAttr = m.quote.id && !m.quote.is_recalled ? 'onclick="jumpToMsg(\\''+m.quote.id+'\\', event)"' : '';
-            quoteHtml = '<div class="quote-box" '+qJumpAttr+'><div class="q-name">'+getName(m.quote.name ? 'unknown' : 'unknown')+':</div><div class="q-txt">'+qContent+'</div></div>'; 
-            if(m.quote.name) quoteHtml = '<div class="quote-box" '+qJumpAttr+'><div class="q-name">'+m.quote.name+':</div><div class="q-txt">'+qContent+'</div></div>';
+            quoteHtml = '<div class="quote-box" '+qJumpAttr+'><div class="q-name">'+getName(m.quote.name ? 'unknown' : 'unknown')+':</div><div class="q-txt">'+escapeHtml(qContent)+'</div></div>'; 
+            if(m.quote.name) quoteHtml = '<div class="quote-box" '+qJumpAttr+'><div class="q-name">'+escapeHtml(m.quote.name)+':</div><div class="q-txt">'+escapeHtml(qContent)+'</div></div>';
         }
         var c = '';
         if (m.content && m.content.startsWith('{"type":"merge_fwd"')) {
@@ -11469,7 +12025,7 @@ HTML_TEMPLATE = """
                     else { c = '<div class="msg-bub file-card clickable" onclick="downloadFile(\\'' + m.server_filename + '\\', \\'' + m.filename + '\\')"><div class="file-icon" style="margin-right:10px">📄</div><div><div>'+m.filename+'</div><div style="font-size:10px;opacity:0.7">点击下载</div></div></div>'; } 
                 }
             } else {
-                c = '<div class="msg-bub ' + (m.tmp?'sending':'') + '">'+quoteHtml+m.content+'</div>';
+                c = '<div class="msg-bub ' + (m.tmp?'sending':'') + '">'+quoteHtml+escapeHtml(m.content)+'</div>';
             }
         }
 
@@ -11513,7 +12069,7 @@ HTML_TEMPLATE = """
             var divId = 'msg-' + m.id;
             var div = document.getElementById(divId);
 
-            if (m.type === 'system' || m.is_recalled) {
+            if (m.type === 'system' || m.is_recalled || m.is_admin_deleted) {
                 var sysRow = renderSystemMsg(m);
                 if (!div) {
                     fragment.appendChild(sysRow);
@@ -11606,9 +12162,9 @@ HTML_TEMPLATE = """
                         if(m.is_img) { 
                             c = '<div class="msg-bub transparent-bub"><img class="chat-img" src="/uploads/'+m.server_filename+'" onclick="viewImg(this.src)"></div>'; 
                         } 
-                        else { c = '<div class="msg-bub file-card clickable" onclick="downloadFile(\\'' + m.server_filename + '\\', \\'' + m.filename + '\\')"><div class="file-icon" style="margin-right:10px">📄</div><div><div>'+m.filename+'</div><div style="font-size:10px;opacity:0.7">点击下载</div></div></div>'; } 
+                    else { c = '<div class="msg-bub file-card clickable" onclick="downloadFile(\\'' + m.server_filename + '\\', \\'' + m.filename + '\\')"><div class="file-icon" style="margin-right:10px">📄</div><div><div>'+escapeHtml(m.filename||'')+'</div><div style="font-size:10px;opacity:0.7">点击下载</div></div></div>'; } 
                     } else {
-                        c = '<div class="msg-bub ' + (m.tmp?'sending':'') + '">'+quoteHtml+m.content+'</div>';
+                c = '<div class="msg-bub ' + (m.tmp?'sending':'') + '">'+quoteHtml+escapeHtml(m.content)+'</div>';
                     }
                 }
 
@@ -11618,7 +12174,7 @@ HTML_TEMPLATE = """
                 var dblClickAttr = (m.from_uid !== me.uid) ? 'ondblclick="doNudge(\\''+m.from_uid+'\\')"' : '';
 
                 div.className = 'msg-row ' + (isMe?'me':'') + ' ' + animClass;
-                div.innerHTML = chk + '<div class="msg-inner"><div class="msg-av" style="background:'+u.avatar_bg+'" '+dblClickAttr+'></div><div><div class="msg-name">'+displayName+'</div>'+c+'</div>'+readHtml+'</div>';
+        div.innerHTML = chk + '<div class="msg-inner"><div class="msg-av" style="background:'+u.avatar_bg+'" '+dblClickAttr+'></div><div><div class="msg-name">'+escapeHtml(displayName)+'</div>'+c+'</div>'+readHtml+'</div>';
 
                 if(isMulti && !m.is_recalled) { div.onclick = function(e) { toggleSel(m.id, e); }; }
                 if(animClass) { setTimeout(function(){ div.classList.remove('anim-in-right', 'anim-in-left'); }, 500); }
@@ -11729,7 +12285,7 @@ HTML_TEMPLATE = """
             
             // 渲染消息
             let msgDiv;
-            if (m.type === 'system' || m.is_recalled) {
+            if (m.type === 'system' || m.is_recalled || m.is_admin_deleted) {
                 msgDiv = renderSystemMsg(m);
             } else {
                 msgDiv = renderMessageElement(m, true); // 带动画
@@ -12020,7 +12576,7 @@ HTML_TEMPLATE = """
         else if (act === 'remark') { openProfile(ctxMsg.from_uid); }
     }
     function copyToClip(txt) { var t = document.createElement("textarea"); t.value = txt; document.body.appendChild(t); t.select(); document.execCommand("copy"); document.body.removeChild(t); showToast('已复制'); }
-    function startQuote(msg) { quoteMsg = msg; var name = msg.pseudoName || getName(msg.from_uid); var txt = msg.type === 'file' ? '[文件] '+msg.filename : msg.content; if(txt && txt.startsWith('{"type":"merge_fwd"')) txt = '[聊天记录]'; if(msg.is_recalled) txt = '<span class="quote-recalled">原消息已被撤回</span>'; document.getElementById('reply-content').innerHTML = "回复 " + name + ": " + txt; document.getElementById('reply-bar').style.display = 'flex'; document.getElementById('inp-msg').focus(); }
+    function startQuote(msg) { quoteMsg = msg; var name = msg.pseudoName || getName(msg.from_uid); var txt = msg.type === 'file' ? '[文件] '+escapeHtml(msg.filename||'') : escapeHtml(msg.content||''); if(msg.content && msg.content.startsWith('{"type":"merge_fwd"')) txt = '[聊天记录]'; if(msg.is_recalled) txt = '<span class="quote-recalled">原消息已被撤回</span>'; document.getElementById('reply-content').innerHTML = "回复 " + escapeHtml(name) + ": " + txt; document.getElementById('reply-bar').style.display = 'flex'; document.getElementById('inp-msg').focus(); }
     function cancelQuote() { quoteMsg = null; document.getElementById('reply-bar').style.display = 'none'; }
     function enterMulti(initialId) { isMulti = true; document.body.classList.add('multi-mode'); selMsgs.clear(); if(initialId) selMsgs.add(initialId.toString()); renderChat(false); }
     function exitMulti() { isMulti = false; document.body.classList.remove('multi-mode'); selMsgs.clear(); renderChat(false); }
@@ -12798,7 +13354,201 @@ HTML_TEMPLATE = """
         } 
     }
     
-    // ==================== 账户信息合并管理面板功能 ====================
+    // ==================== 封号管理面板功能 ====================
+
+    function openBanPanel() {
+        openMd('md-account-panel');
+        showAdminSection('ban');
+    }
+
+    function showBanSection(type) {
+        ['uid','ip','mac'].forEach(t => {
+            document.getElementById('ban-section-' + t).style.display = t === type ? 'flex' : 'none';
+            document.getElementById('ban-tab-' + t).style.background = t === type ? '#ff3b30' : '#444';
+        });
+        document.getElementById('ban-section-' + type).style.flexDirection = 'column';
+    }
+
+    async function loadBanList() {
+        try {
+            const r = await fetch('/api/admin/ban/list', {
+                method: 'POST', headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({token: adminToken})
+            });
+            const data = await r.json();
+            // 渲染 uid 列表
+            const uidEl = document.getElementById('ban-uid-list');
+            uidEl.innerHTML = data.uids.length ? data.uids.map(u =>
+                `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 8px;border-bottom:1px solid #333;">
+                    <span style="font-size:13px;">${escapeHtml(u.name||u.uid)} <span style="color:#666;font-size:11px;">(${u.uid})</span></span>
+                    <button onclick="doUnban('uid','${u.uid}')" style="background:#333;border:none;color:#ff3b30;cursor:pointer;padding:4px 8px;border-radius:4px;font-size:12px;">解封</button>
+                </div>`).join('') : '<div style="color:#666;padding:10px;text-align:center;">暂无封禁账号</div>';
+            // 渲染 ip 列表
+            const ipEl = document.getElementById('ban-ip-list');
+            ipEl.innerHTML = data.ips.length ? data.ips.map(ip =>
+                `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 8px;border-bottom:1px solid #333;">
+                    <span style="font-size:13px;">${escapeHtml(ip)}</span>
+                    <button onclick="doUnban('ip','${ip}')" style="background:#333;border:none;color:#ff3b30;cursor:pointer;padding:4px 8px;border-radius:4px;font-size:12px;">解封</button>
+                </div>`).join('') : '<div style="color:#666;padding:10px;text-align:center;">暂无封禁 IP</div>';
+            // 渲染 mac 列表
+            const macEl = document.getElementById('ban-mac-list');
+            macEl.innerHTML = data.macs.length ? data.macs.map(mac =>
+                `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 8px;border-bottom:1px solid #333;">
+                    <span style="font-size:13px;">${escapeHtml(mac)}</span>
+                    <button onclick="doUnban('mac','${mac}')" style="background:#333;border:none;color:#ff3b30;cursor:pointer;padding:4px 8px;border-radius:4px;font-size:12px;">解封</button>
+                </div>`).join('') : '<div style="color:#666;padding:10px;text-align:center;">暂无封禁 MAC</div>';
+        } catch(e) { console.error('loadBanList error', e); }
+    }
+
+    let _banConfirmUid = null;  // 当前待附加封禁的 UID
+
+    async function doBan(type) {
+        const input = document.getElementById('ban-' + type + '-input');
+        const target = input.value.trim();
+        if (!target) return alert('请输入目标');
+        try {
+            const r = await fetch('/api/admin/ban', {
+                method: 'POST', headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({token: adminToken, type, target})
+            });
+            const data = await r.json();
+            if (!r.ok) return alert(data.error || '封禁失败');
+            input.value = '';
+            loadBanList();
+
+            // 封禁 UID 后，查询该用户已知设备并弹出附加封禁确认框
+            if (type === 'uid') {
+                _banConfirmUid = target;
+                const devEl = document.getElementById('ban-confirm-devices');
+                devEl.textContent = '正在查询设备信息…';
+                document.getElementById('ban-confirm-ip').checked = false;
+                document.getElementById('ban-confirm-mac').checked = false;
+                document.getElementById('ban-confirm-future-mac').checked = true;
+                document.getElementById('md-ban-confirm').style.display = 'flex';
+                try {
+                    const dr = await fetch('/api/admin/user_devices', {
+                        method: 'POST', headers: {'Content-Type':'application/json'},
+                        body: JSON.stringify({token: adminToken, uid: target})
+                    });
+                    if (dr.ok) {
+                        const dd = await dr.json();
+                        const ips = [...new Set(dd.devices.map(d => d.ip).filter(Boolean))];
+                        const macs = [...new Set(dd.devices.map(d => d.mac).filter(Boolean))];
+                        let info = '';
+                        if (ips.length) info += 'IP: ' + ips.join(', ') + '\\n';
+                        if (macs.length) info += 'MAC: ' + macs.join(', ');
+                        devEl.textContent = info || '（未找到该用户的设备记录）';
+                    } else {
+                        devEl.textContent = '（查询失败）';
+                    }
+                } catch(e) { devEl.textContent = '（查询失败）'; }
+            }
+        } catch(e) { alert('请求失败'); }
+    }
+
+    async function confirmBanExtra() {
+        document.getElementById('md-ban-confirm').style.display = 'none';
+        if (!_banConfirmUid) return;
+        const banIp = document.getElementById('ban-confirm-ip').checked;
+        const banMac = document.getElementById('ban-confirm-mac').checked;
+        if (!banIp && !banMac) return;
+        try {
+            const r2 = await fetch('/api/admin/ban', {
+                method: 'POST', headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({token: adminToken, type: 'uid', target: _banConfirmUid,
+                    also_ban_ip: banIp, also_ban_mac: banMac})
+            });
+            if (!r2.ok) { const d2 = await r2.json(); alert(d2.error || '附加封禁失败'); }
+            else loadBanList();
+        } catch(e) { alert('附加封禁请求失败'); }
+        _banConfirmUid = null;
+    }
+
+    async function doUnban(type, target) {
+        try {
+            const r = await fetch('/api/admin/unban', {
+                method: 'POST', headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({token: adminToken, type, target})
+            });
+            if (!r.ok) { const d = await r.json(); return alert(d.error || '解封失败'); }
+            loadBanList();
+        } catch(e) { alert('请求失败'); }
+    }
+
+    // ==================== 消息管理面板功能 ====================
+
+    let adminMsgData = [];
+
+    function openMsgPanel() {
+        openMd('md-account-panel');
+        showAdminSection('msg');
+    }
+
+    async function loadAdminMessages() {
+        const keyword = document.getElementById('msg-search-input').value.trim();
+        try {
+            const r = await fetch('/api/admin/messages', {
+                method: 'POST', headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({token: adminToken, keyword})
+            });
+            const data = await r.json();
+            adminMsgData = data.messages || [];
+            renderAdminMsgList();
+        } catch(e) { console.error('loadAdminMessages error', e); }
+    }
+
+    function renderAdminMsgList() {
+        const el = document.getElementById('admin-msg-list');
+        if (!adminMsgData.length) { el.innerHTML = '<div style="color:#666;padding:10px;text-align:center;">暂无消息</div>'; return; }
+        el.innerHTML = adminMsgData.map((m, i) => {
+            const ts = m.timestamp ? new Date(m.timestamp * 1000).toLocaleString() : '';
+            const content = m.is_admin_deleted ? '<span style="color:#666;font-style:italic;">此消息已被管理员删除</span>' : escapeHtml(m.content || '');
+            const delBtn = m.is_admin_deleted ? '' : '<button onclick="deleteSingleMsg(' + m.id + ')" style="background:#333;border:none;color:#ff3b30;cursor:pointer;padding:4px 8px;border-radius:4px;font-size:12px;white-space:nowrap;">删除</button>';
+            return '<div style="display:flex;align-items:flex-start;gap:8px;padding:6px 8px;border-bottom:1px solid #222;">'
+                + '<input type="checkbox" class="msg-chk" data-id="' + m.id + '" onchange="updateMsgCount()" ' + (m.is_admin_deleted ? 'disabled' : '') + '>'
+                + '<div style="flex:1;min-width:0;">'
+                + '<div style="font-size:11px;color:#888;">' + escapeHtml(m.sender_name||m.from_uid) + ' · ' + ts + '</div>'
+                + '<div style="font-size:13px;margin-top:2px;word-break:break-all;">' + content + '</div>'
+                + '</div>'
+                + delBtn
+                + '</div>';
+        }).join('');
+    }
+
+    function updateMsgCount() {
+        const checked = document.querySelectorAll('.msg-chk:checked').length;
+        document.getElementById('msg-selected-count').textContent = '已选 ' + checked + ' 条';
+    }
+
+    function toggleSelectAllMsgs(checked) {
+        document.querySelectorAll('.msg-chk:not(:disabled)').forEach(c => { c.checked = checked; });
+        updateMsgCount();
+    }
+
+    async function deleteSingleMsg(id) {
+        try {
+            const r = await fetch('/api/admin/delete_message', {
+                method: 'POST', headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({token: adminToken, message_id: id})
+            });
+            if (!r.ok) { const d = await r.json(); return alert(d.error || '删除失败'); }
+            loadAdminMessages();
+        } catch(e) { alert('请求失败'); }
+    }
+
+    async function deleteSelectedMsgs() {
+        const ids = Array.from(document.querySelectorAll('.msg-chk:checked')).map(c => parseInt(c.dataset.id));
+        if (!ids.length) return alert('请先选择消息');
+        for (const id of ids) {
+            await fetch('/api/admin/delete_message', {
+                method: 'POST', headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({token: adminToken, message_id: id})
+            });
+        }
+        loadAdminMessages();
+    }
+
+// ==================== 账户信息合并管理面板功能 ====================
     
     let adminToken = null;  // 管理员会话 token（安全存储）
     let accountPanelData = [];  // 存储账户列表数据
@@ -12834,26 +13584,48 @@ HTML_TEMPLATE = """
         document.getElementById('md-account-panel').style.display = 'flex';
     }
         
-    function showAccessControlSection() {
-        document.getElementById('access-control-section').style.display = 'block';
-        document.getElementById('delete-account-section').style.display = 'none';
-        document.getElementById('merge-account-section').style.display = 'none';
-        renderAccessControlList();
+    function showAdminSection(name) {
+        // 隐藏所有 section
+        ['access-control-section','delete-account-section','merge-account-section','admin-section-ban','admin-section-msg'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = 'none';
+        });
+        // 重置所有 tab 按钮颜色
+        const tabColors = {
+            'access': '#30d158', 'delete': '#ff3b30', 'merge': '#007aff',
+            'ban': '#ff6b00', 'msg': '#8e44ad'
+        };
+        Object.keys(tabColors).forEach(k => {
+            const btn = document.getElementById('admin-tab-' + k);
+            if (btn) btn.style.background = '#444';
+        });
+        // 显示目标 section 并高亮 tab
+        const sectionMap = {
+            'access': 'access-control-section',
+            'delete': 'delete-account-section',
+            'merge': 'merge-account-section',
+            'ban': 'admin-section-ban',
+            'msg': 'admin-section-msg'
+        };
+        const target = document.getElementById(sectionMap[name]);
+        if (target) target.style.display = 'flex';
+        const tabBtn = document.getElementById('admin-tab-' + name);
+        if (tabBtn) tabBtn.style.background = tabColors[name];
+        // 切换到封禁时加载列表
+        if (name === 'ban') { loadBanList(); showBanSection('uid'); }
+        // 切换到消息时加载列表
+        if (name === 'msg') loadAdminMessages();
+        // 切换到其他 section 时加载对应列表
+        if (name === 'access') renderAccessControlList();
+        if (name === 'delete') renderDeleteAccountList();
+        if (name === 'merge') renderMergeAccountLists();
     }
+
+    function showAccessControlSection() { showAdminSection('access'); }
         
-    function showDeleteAccountSection() {
-        document.getElementById('access-control-section').style.display = 'none';
-        document.getElementById('delete-account-section').style.display = 'block';
-        document.getElementById('merge-account-section').style.display = 'none';
-        renderDeleteAccountList();
-    }
+    function showDeleteAccountSection() { showAdminSection('delete'); }
         
-    function showMergeAccountSection() {
-        document.getElementById('access-control-section').style.display = 'none';
-        document.getElementById('delete-account-section').style.display = 'none';
-        document.getElementById('merge-account-section').style.display = 'block';
-        renderMergeAccountLists();
-    }
+    function showMergeAccountSection() { showAdminSection('merge'); }
     
     function renderAccessControlList() {
         const container = document.getElementById('access-control-list');

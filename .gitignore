@@ -28,6 +28,7 @@ qq_data.db
 config.json
 
 # IDE
+.sisyphus/
 .idea/
 .vscode/
 .claude/
@@ -44,8 +45,11 @@ config.json
 htmlcov/
 .coverage
 .tox/
+requirements-dev.txt
 
 # Logs
+tests/
+tools/
 *.log
 
 # OS
@@ -61,10 +65,7 @@ uploads/*
 node_modules/
 
 # Build artifacts
-*.spec
 main.spec
-聊天室.spec
-聊天室无命令行.spec
 
 # Temporary files
 *.tmp
