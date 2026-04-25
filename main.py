@@ -6991,7 +6991,7 @@ def admin_messages():
             '''SELECT m.id, m.from_uid, u.name as sender_name, m.content, m.timestamp, m.is_admin_deleted
                FROM messages m LEFT JOIN users u ON m.from_uid=u.uid
                WHERE (m.content LIKE ? OR u.name LIKE ?) AND m.type NOT IN ('system','file')
-               ORDER BY m.timestamp DESC LIMIT 100''',
+               ORDER BY m.timestamp DESC''',
             (f'%{keyword}%', f'%{keyword}%')
         ).fetchall()
     else:
@@ -6999,7 +6999,7 @@ def admin_messages():
             '''SELECT m.id, m.from_uid, u.name as sender_name, m.content, m.timestamp, m.is_admin_deleted
                FROM messages m LEFT JOIN users u ON m.from_uid=u.uid
                WHERE m.type NOT IN ('system','file')
-               ORDER BY m.timestamp DESC LIMIT 100'''
+               ORDER BY m.timestamp DESC'''
         ).fetchall()
     return jsonify({'messages': [dict(r) for r in rows]})
 
@@ -8373,10 +8373,7 @@ HTML_TEMPLATE = """
                 <button class="btn-block clickable" style="width:80px; flex-shrink:0; margin:0; background:#ff9500; padding:10px;" onclick="loadAdminMessages()">搜索</button>
             </div>
             <div style="display:flex; gap:10px; margin-bottom:10px; align-items:center;">
-                <label style="font-size:12px; color:#888; cursor:pointer;">
-                    <input type="checkbox" id="msg-select-all" onchange="toggleSelectAllMsgs(this.checked)" style="margin-right:5px;">全选
-                </label>
-                <button class="btn-block clickable" style="width:120px; flex-shrink:0; margin:0; background:#ff3b30; padding:8px; font-size:12px;" onclick="deleteSelectedMsgs()">删除选中消息</button>
+                <button class="btn-block clickable" style="width:140px; flex-shrink:0; margin:0; background:#ff3b30; padding:8px; font-size:12px;" onclick="deleteSelectedMsgs()">删除选中消息</button>
                 <span id="msg-selected-count" style="font-size:12px; color:#888;">已选 0 条</span>
             </div>
             <div id="admin-msg-list" style="flex:1; overflow-y:auto; background:#1a1a1a; border-radius:8px; padding:5px; min-height:0;"></div>
@@ -13505,7 +13502,7 @@ HTML_TEMPLATE = """
             const content = m.is_admin_deleted ? '<span style="color:#666;font-style:italic;">此消息已被管理员删除</span>' : escapeHtml(m.content || '');
             const delBtn = m.is_admin_deleted ? '' : '<button onclick="deleteSingleMsg(' + m.id + ')" style="background:#333;border:none;color:#ff3b30;cursor:pointer;padding:4px 8px;border-radius:4px;font-size:12px;white-space:nowrap;">删除</button>';
             return '<div style="display:flex;align-items:flex-start;gap:8px;padding:6px 8px;border-bottom:1px solid #222;">'
-                + '<input type="checkbox" class="msg-chk" data-id="' + m.id + '" onchange="updateMsgCount()" ' + (m.is_admin_deleted ? 'disabled' : '') + '>'
+                + '<input type="checkbox" class="admin-msg-chk" data-id="' + m.id + '" onchange="updateMsgCount()" ' + (m.is_admin_deleted ? 'disabled' : '') + '>'
                 + '<div style="flex:1;min-width:0;">'
                 + '<div style="font-size:11px;color:#888;">' + escapeHtml(m.sender_name||m.from_uid) + ' · ' + ts + '</div>'
                 + '<div style="font-size:13px;margin-top:2px;word-break:break-all;">' + content + '</div>'
@@ -13516,13 +13513,8 @@ HTML_TEMPLATE = """
     }
 
     function updateMsgCount() {
-        const checked = document.querySelectorAll('.msg-chk:checked').length;
+        const checked = document.querySelectorAll('.admin-msg-chk:checked').length;
         document.getElementById('msg-selected-count').textContent = '已选 ' + checked + ' 条';
-    }
-
-    function toggleSelectAllMsgs(checked) {
-        document.querySelectorAll('.msg-chk:not(:disabled)').forEach(c => { c.checked = checked; });
-        updateMsgCount();
     }
 
     async function deleteSingleMsg(id) {
@@ -13537,7 +13529,7 @@ HTML_TEMPLATE = """
     }
 
     async function deleteSelectedMsgs() {
-        const ids = Array.from(document.querySelectorAll('.msg-chk:checked')).map(c => parseInt(c.dataset.id));
+        const ids = Array.from(document.querySelectorAll('.admin-msg-chk:checked')).map(c => parseInt(c.dataset.id));
         if (!ids.length) return alert('请先选择消息');
         for (const id of ids) {
             await fetch('/api/admin/delete_message', {
