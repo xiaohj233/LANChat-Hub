@@ -7,17 +7,14 @@
 
 from PyInstaller.building.datastruct import Tree
 
-# 静态资源树：递归遍历 static/ 目录，排除 telegram_stickers（版权/体积原因）
-_static_files = Tree('static', excludes=['telegram_stickers'])
-
 # 分析阶段：收集依赖与资源
 a = Analysis(
     # 入口文件：Flask 聊天应用
     ['main.py'],
     pathex=[],
     binaries=[],
-    # 静态资源：表情包、前端 JS/CSS（排除 telegram_stickers）
-    datas=_static_files,
+    # 静态资源：初始为空，下面用 Tree 追加
+    datas=[],
     # 显式声明隐藏导入，防止 PyInstaller 遗漏
     hiddenimports=[
         # Web 框架核心
@@ -82,6 +79,9 @@ a = Analysis(
     # 字节码优化（-OO：移除 docstring，减小体积提升性能）
     optimize=2,
 )
+
+# 静态资源树：递归遍历 static/ 目录，排除 telegram_stickers（版权/体积原因）
+a.datas += Tree('static', excludes=['telegram_stickers'])
 
 # PY Z 归档：将纯 Python 模块打包为一个文件
 pyz = PYZ(a.pure)
