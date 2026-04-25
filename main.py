@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-LANChat Hub v1.0.0 - 局域网聊天应用
+LANChat Hub v1.1.0 - 局域网聊天应用
 """
 
 import os

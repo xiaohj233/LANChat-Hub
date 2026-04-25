@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
+![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.7+-green.svg)
 ![Flask](https://img.shields.io/badge/flask-2.0+-orange.svg)
 ![Werkzeug](https://img.shields.io/badge/werkzeug-2.0+-orange.svg)
@@ -71,7 +71,7 @@
 如果你不想配置 Python 环境，可以直接下载预编译的可执行文件：
 
 1. 前往 [Releases](https://github.com/xiaohj233/LANChat-Hub/releases) 页面
-2. 下载最新版本的压缩包（例如：`LANChat-Hub-v1.0.0-Windows.zip`）
+2. 下载最新版本的压缩包（例如：`LANChat-Hub-v1.1.0-Windows.zip`）
 3. 解压到任意目录
 4. 双击运行 `聊天室.exe`
 5. 在浏览器输入命令行显示的地址，例如：`http://192.168.1.100:5000`

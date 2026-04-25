@@ -1,6 +1,6 @@
 {
   "name": "chatroom-p2p-tests",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "P2P file transfer property tests",
   "private": true,
   "scripts": {
