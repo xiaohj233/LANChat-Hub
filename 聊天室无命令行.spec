@@ -79,7 +79,8 @@ a = Analysis(
 )
 
 # 静态资源树：递归遍历 static/ 目录，排除 telegram_stickers（版权/体积原因）
-a.datas += Tree('static', excludes=['telegram_stickers'])
+# 注意：prefix='static' 保证文件被解压到 _MEIPASS/static/... 而非 _MEIPASS/...
+a.datas += Tree('static', prefix='static', excludes=['telegram_stickers'])
 
 # PY Z 归档：将纯 Python 模块打包为一个文件
 pyz = PYZ(a.pure)
