@@ -18,11 +18,11 @@ import datetime
 import logging
 from flask import Flask, request, jsonify, send_from_directory, render_template_string, g
 
-# ================= 密码配置区（请在此处修改密码）=================
+# ================= 密码配置区 =================
 
 # 管理员密码配置
-# 优先级：main.py 配置 > config.json 配置 > 默认密码
-# 如果不想在代码中设置密码，请保持为空字符串 ""
+# 优先级：main.py 配置 > 环境变量 > config.json 配置 > 默认密码
+# 打包脚本使用环境变量注入密码，避免把实际密码写入项目源码。
 # 密码1：账户管理面板密码
 ADMIN_PASSWORD_1 = ""  # 留空则使用配置文件或默认密码 "123"
 # 密码2：管理员日志查看密码
@@ -31,7 +31,6 @@ ADMIN_PASSWORD_2 = ""  # 留空则使用配置文件或默认密码 "321"
 # 服务器启动密码配置
 # 启动密码：运行程序时需要输入的密码才能启动服务器
 # 留空则不需要密码直接启动
-# 注意：此密码无法通过 config.json 配置文件更改，只能在此处设置
 SERVER_STARTUP_PASSWORD = ""  # 留空则不需要密码
 
 # ================= 启动密码验证模块 =================
@@ -522,6 +521,12 @@ if not os.path.exists(UPLOAD_FOLDER):
         pass
 
 
+def load_startup_password():
+    """加载服务器启动密码，优先级：main.py 配置 > 环境变量 > 空。"""
+    env_password = os.environ.get('LANCHAT_STARTUP_PASSWORD', '')
+    return SERVER_STARTUP_PASSWORD if SERVER_STARTUP_PASSWORD else env_password
+
+
 
 # ================= 强制静态文件路由 =================
 @app.route('/static/telegram_stickers/mapping.json')
@@ -574,8 +579,9 @@ def load_admin_passwords():
     """
     加载管理员密码，优先级：
     1. main.py 中的配置（ADMIN_PASSWORD_1, ADMIN_PASSWORD_2）
-    2. config.json 配置文件
-    3. 默认密码（"123", "321"）
+    2. 环境变量（LANCHAT_ADMIN_PASSWORD_1, LANCHAT_ADMIN_PASSWORD_2）
+    3. config.json 配置文件
+    4. 默认密码（"123", "321"）
     
     返回：(password1, password2) 元组
     """
@@ -586,6 +592,8 @@ def load_admin_passwords():
     # 从配置文件读取
     config_password_1 = None
     config_password_2 = None
+    env_password_1 = os.environ.get('LANCHAT_ADMIN_PASSWORD_1', '')
+    env_password_2 = os.environ.get('LANCHAT_ADMIN_PASSWORD_2', '')
     
     if os.path.exists(CONFIG_FILE):
         try:
@@ -596,9 +604,17 @@ def load_admin_passwords():
         except Exception as e:
             logger.warning(f"Failed to load config file: {e}")
     
-    # 优先级判断：main.py > config.json > 默认值
-    password_1 = ADMIN_PASSWORD_1 if ADMIN_PASSWORD_1 else (config_password_1 if config_password_1 else default_password_1)
-    password_2 = ADMIN_PASSWORD_2 if ADMIN_PASSWORD_2 else (config_password_2 if config_password_2 else default_password_2)
+    # 优先级判断：main.py > 环境变量 > config.json > 默认值
+    password_1 = ADMIN_PASSWORD_1 if ADMIN_PASSWORD_1 else (
+        env_password_1 if env_password_1 else (
+            config_password_1 if config_password_1 else default_password_1
+        )
+    )
+    password_2 = ADMIN_PASSWORD_2 if ADMIN_PASSWORD_2 else (
+        env_password_2 if env_password_2 else (
+            config_password_2 if config_password_2 else default_password_2
+        )
+    )
     
     return password_1, password_2
 
@@ -761,6 +777,23 @@ def init_db():
             'ALTER TABLE users ADD COLUMN unrestricted_access INTEGER DEFAULT 0')
     except sqlite3.OperationalError:
         pass  # 字段已存在
+
+    # 迁移：为旧版 users 表补齐账户生命周期字段（如果不存在）
+    user_lifecycle_columns = [
+        ('deleted', 'INTEGER DEFAULT 0'),
+        ('deleted_at', 'REAL'),
+        ('deleted_name', 'TEXT'),
+        ('merged_to', 'TEXT'),
+        ('merged_at', 'REAL'),
+        ('session_invalidated', 'INTEGER DEFAULT 0'),
+        ('session_invalidated_at', 'REAL'),
+    ]
+    for column_name, column_def in user_lifecycle_columns:
+        try:
+            cursor.execute(
+                f'ALTER TABLE users ADD COLUMN {column_name} {column_def}')
+        except sqlite3.OperationalError:
+            pass  # 字段已存在
 
     # 消息表
     cursor.execute('''
@@ -4279,52 +4312,29 @@ def get_history():
             if not member:
                 return jsonify({'error': 'Not in group'}), 403
 
-    # 构建查询条件
-    params = []
     use_after = after_id > 0  # 是否使用向下加载模式
 
+    # 构建查询条件。撤回消息作为占位另行合并，避免占用正常消息分页名额。
     if chat_type == 'group':
-        if use_after:
-            # 向下加载：获取 after_id 之后的消息
-            query = '''SELECT * FROM messages WHERE to_uid = ? AND id > ? ORDER BY id ASC LIMIT ?'''
-            params = [chat_id, after_id, limit + 1]
-        elif before_id > 0:
-            query = '''SELECT * FROM messages WHERE to_uid = ? AND id < ? ORDER BY id DESC LIMIT ?'''
-            params = [chat_id, before_id, limit + 1]
-        else:
-            query = '''SELECT * FROM messages WHERE to_uid = ? ORDER BY id DESC LIMIT ?'''
-            params = [chat_id, limit + 1]
+        scope_sql = 'to_uid = ?'
+        scope_params = [chat_id]
+    elif chat_id == uid:
+        scope_sql = 'from_uid = ? AND to_uid = ?'
+        scope_params = [uid, uid]
     else:
-        # 私聊: 获取双方的消息
-        if chat_id == uid:
-            # 自己与自己的聊天
-            if use_after:
-                query = '''SELECT * FROM messages WHERE from_uid = ? AND to_uid = ? AND id > ? ORDER BY id ASC LIMIT ?'''
-                params = [uid, uid, after_id, limit + 1]
-            elif before_id > 0:
-                query = '''SELECT * FROM messages WHERE from_uid = ? AND to_uid = ? AND id < ? ORDER BY id DESC LIMIT ?'''
-                params = [uid, uid, before_id, limit + 1]
-            else:
-                query = '''SELECT * FROM messages WHERE from_uid = ? AND to_uid = ? ORDER BY id DESC LIMIT ?'''
-                params = [uid, uid, limit + 1]
-        else:
-            if use_after:
-                query = '''SELECT * FROM messages WHERE 
-                          ((from_uid = ? AND to_uid = ?) OR (from_uid = ? AND to_uid = ?)) 
-                          AND id > ? 
-                          ORDER BY id ASC LIMIT ?'''
-                params = [uid, chat_id, chat_id, uid, after_id, limit + 1]
-            elif before_id > 0:
-                query = '''SELECT * FROM messages WHERE 
-                          ((from_uid = ? AND to_uid = ?) OR (from_uid = ? AND to_uid = ?)) 
-                          AND id < ? 
-                          ORDER BY id DESC LIMIT ?'''
-                params = [uid, chat_id, chat_id, uid, before_id, limit + 1]
-            else:
-                query = '''SELECT * FROM messages WHERE 
-                          ((from_uid = ? AND to_uid = ?) OR (from_uid = ? AND to_uid = ?)) 
-                          ORDER BY id DESC LIMIT ?'''
-                params = [uid, chat_id, chat_id, uid, limit + 1]
+        scope_sql = '((from_uid = ? AND to_uid = ?) OR (from_uid = ? AND to_uid = ?))'
+        scope_params = [uid, chat_id, chat_id, uid]
+
+    query = f'''SELECT * FROM messages WHERE {scope_sql} AND is_recalled = 0'''
+    params = list(scope_params)
+    if use_after:
+        query += ' AND id > ?'
+        params.append(after_id)
+    elif before_id > 0:
+        query += ' AND id < ?'
+        params.append(before_id)
+    query += ' ORDER BY id ' + ('ASC' if use_after else 'DESC') + ' LIMIT ?'
+    params.append(limit + 1)
 
     # 应用访问控制过滤
     query, params = apply_registration_time_filter(uid, query, params)
@@ -4335,6 +4345,37 @@ def get_history():
     has_more_result = len(rows) > limit
     if has_more_result:
         rows = rows[:limit]
+
+    # 合并同一窗口内的撤回占位消息，但不让它们挤掉正常消息。
+    recalled_query = f'''SELECT * FROM messages WHERE {scope_sql} AND is_recalled = 1'''
+    recalled_params = list(scope_params)
+    if use_after:
+        recalled_query += ' AND id > ?'
+        recalled_params.append(after_id)
+        if rows:
+            recalled_query += ' AND id <= ?'
+            recalled_params.append(rows[-1]['id'])
+    else:
+        if before_id > 0:
+            recalled_query += ' AND id < ?'
+            recalled_params.append(before_id)
+        if rows:
+            recalled_query += ' AND id >= ?'
+            recalled_params.append(rows[-1]['id'])
+    recalled_query += ' ORDER BY id ' + ('ASC' if use_after else 'DESC')
+    if not rows:
+        recalled_query += ' LIMIT ?'
+        recalled_params.append(limit)
+
+    recalled_query, recalled_params = apply_registration_time_filter(uid, recalled_query, recalled_params)
+    recalled_rows = conn.execute(recalled_query, recalled_params).fetchall()
+    if recalled_rows:
+        existing_ids = set(r['id'] for r in rows)
+        for recalled_row in recalled_rows:
+            if recalled_row['id'] not in existing_ids:
+                rows.append(recalled_row)
+                existing_ids.add(recalled_row['id'])
+        rows.sort(key=lambda r: r['id'], reverse=not use_after)
 
     # 注入当前聊天中可能不在最近N条内的墓碑消息（is_admin_deleted=1）
     # 确保管理员删除的占位符消息在刷新页面后仍然可见
@@ -6765,12 +6806,25 @@ def delete_account():
         (time.time(), old_name, f"[已删除]{old_name}_{target_uid}", target_uid)
     )
 
+    # 如果是群主，将群组所有权转移给剩余成员；无人可接手时转给 system
+    owned_groups = conn.execute(
+        'SELECT id FROM groups WHERE owner = ?', (target_uid,)
+    ).fetchall()
+    for group in owned_groups:
+        replacement = conn.execute(
+            '''SELECT uid FROM group_members
+               WHERE group_id = ? AND uid != ?
+               ORDER BY uid LIMIT 1''',
+            (group['id'], target_uid)
+        ).fetchone()
+        new_owner = replacement['uid'] if replacement else 'system'
+        conn.execute(
+            'UPDATE groups SET owner = ?, version = version + 1 WHERE id = ?',
+            (new_owner, group['id'])
+        )
+
     # 从所有群组中移除该用户
     conn.execute('DELETE FROM group_members WHERE uid = ?', (target_uid,))
-
-    # 如果是群主，将群组所有权转移给 system
-    conn.execute('UPDATE groups SET owner = ? WHERE owner = ?',
-                 ('system', target_uid))
 
     # 删除该用户的已读标记
     conn.execute('DELETE FROM read_markers WHERE uid = ?', (target_uid,))
@@ -7112,7 +7166,27 @@ def merge_accounts():
 
     conn.execute('DELETE FROM read_markers WHERE uid = ?', (source_uid,))
 
-    # 4. 合并备注（目标账户的备注优先）
+    # 4. 合并其他用户对源账户私聊的已读标记
+    peer_markers = conn.execute(
+        'SELECT uid, msg_id FROM read_markers WHERE chat_id = ?', (source_uid,)
+    ).fetchall()
+
+    for marker in peer_markers:
+        marker_uid = marker['uid']
+        msg_id = marker['msg_id']
+        target_marker = conn.execute(
+            'SELECT msg_id FROM read_markers WHERE uid = ? AND chat_id = ?',
+            (marker_uid, target_uid)
+        ).fetchone()
+        if not target_marker or msg_id > target_marker['msg_id']:
+            conn.execute(
+                'INSERT OR REPLACE INTO read_markers (uid, chat_id, msg_id) VALUES (?, ?, ?)',
+                (marker_uid, target_uid, msg_id)
+            )
+
+    conn.execute('DELETE FROM read_markers WHERE chat_id = ?', (source_uid,))
+
+    # 5. 合并备注（目标账户的备注优先）
     source_remarks = conn.execute(
         'SELECT target_uid, remark FROM remarks WHERE uid = ?', (source_uid,)
     ).fetchall()
@@ -7133,7 +7207,7 @@ def merge_accounts():
 
     conn.execute('DELETE FROM remarks WHERE uid = ?', (source_uid,))
 
-    # 5. 将其他用户对源账户的备注转移到目标账户
+    # 6. 将其他用户对源账户的备注转移到目标账户
     other_remarks = conn.execute(
         'SELECT uid, remark FROM remarks WHERE target_uid = ?', (source_uid,)
     ).fetchall()
@@ -7154,7 +7228,7 @@ def merge_accounts():
 
     conn.execute('DELETE FROM remarks WHERE target_uid = ?', (source_uid,))
 
-    # 6. 合并注册时间和无限制访问权限
+    # 7. 合并注册时间和无限制访问权限
     # 获取两个账户的 registered_at 和 unrestricted_access 值
     source_registered_at = source_user['registered_at']
     target_registered_at = target_user['registered_at']
@@ -7186,7 +7260,7 @@ def merge_accounts():
         (merged_registered_at, merged_unrestricted_access, target_uid)
     )
 
-    # 7. 标记源账户为已合并（禁止登录）（版本控制：递增 version 确保客户端能通过 /sync 感知合并状态）
+    # 8. 标记源账户为已合并（禁止登录）（版本控制：递增 version 确保客户端能通过 /sync 感知合并状态）
     # 保留源账户的 registered_at 字段用于历史追踪
     conn.execute(
         '''UPDATE users SET deleted = 1, merged_to = ?, merged_at = ?, 
@@ -8232,7 +8306,7 @@ HTML_TEMPLATE = """
 </div>
 
 <!-- MODALS -->
-<div id="md-login" class="modal-bg" style="display:none;"><div class="modal-box"><div class="modal-h">LANChat Hub</div><form onsubmit="doLogin(); return false;" style="display:contents;"><input id="inp-nick" class="modal-inp" placeholder="输入昵称" maxlength="10" style="text-align:center;"><input id="inp-pwd" type="password" class="modal-inp" placeholder="设置/输入密码" style="text-align:center;" onkeypress="if(event.keyCode==13)doLogin()"><button class="btn-block clickable" type="button" onclick="doLogin()">注册 / 登录</button></form></div></div>
+<div id="md-login" class="modal-bg" style="display:none;"><div class="modal-box"><div class="modal-h">LANChat Hub</div><form onsubmit="doLogin(); return false;" style="display:contents;"><input id="inp-nick" class="modal-inp" placeholder="输入昵称" style="text-align:center;"><input id="inp-pwd" type="password" class="modal-inp" placeholder="设置/输入密码" style="text-align:center;" onkeypress="if(event.keyCode==13)doLogin()"><button class="btn-block clickable" type="button" onclick="doLogin()">注册 / 登录</button></form></div></div>
 <div id="md-create" class="modal-bg"><div class="modal-box"><div class="modal-h">新建群组</div><input id="inp-grp-name" class="modal-inp" placeholder="群组名称"><div style="font-size:12px; margin-bottom:10px; color:var(--text-sub);">选择好友:</div><div id="create-list" style="flex:1; overflow-y:auto; margin-bottom:15px; min-height:100px;"></div><button class="btn-block clickable" onclick="submitCreate()">创建</button><div style="text-align:center; margin-top:5px; font-size:12px; cursor:pointer; color:var(--text-sub);" onclick="closeMd('md-create')">取消</div></div></div>
 <div id="md-manage" class="modal-bg"><div class="modal-box"><div class="modal-h">群组管理</div><div class="setting-section"><div class="setting-label">群名称</div><input id="mng-grp-name" class="modal-inp" placeholder="修改群名"><button class="btn-block clickable" style="margin-bottom:0; padding:8px; font-size:13px;" onclick="doRename()">保存名称</button></div><div class="setting-section" style="padding-bottom:0; border:none;"><div class="setting-label">成员管理</div><button class="btn-block clickable" style="background:#30d158; margin-bottom:10px;" onclick="openInvite()">+ 邀请新成员</button><div id="mng-mem-list" style="max-height:150px; overflow-y:auto; background:rgba(0,0,0,0.03); border-radius:8px; padding:5px;"></div></div><button class="btn-block clickable" style="background:#ff3b30; margin-top:15px;" onclick="doDissolve()">解散群组</button><div style="text-align:center; margin-top:10px; font-size:12px; cursor:pointer; color:var(--text-sub);" onclick="closeMd('md-manage')">关闭</div></div></div>
 <div id="md-invite" class="modal-bg"><div class="modal-box"><div class="modal-h">邀请成员</div><div id="invite-list" style="flex:1; overflow-y:auto; margin-bottom:15px; min-height:100px;"></div><button class="btn-block clickable" onclick="submitInvite()">邀请加入</button><div style="text-align:center; margin-top:5px; font-size:12px; cursor:pointer; color:var(--text-sub);" onclick="closeMd('md-invite')">取消</div></div></div>
@@ -13638,7 +13712,7 @@ HTML_TEMPLATE = """
             h += '<div class="account-item" style="display:flex; align-items:center; padding:10px; margin:5px 0; background:#222; border-radius:8px; border:1px solid #333;">' +
                 '<div style="width:40px; height:40px; border-radius:12px; background:' + acc.avatar_bg + '; margin-right:12px; flex-shrink:0;"></div>' +
                 '<div style="flex:1; min-width:0;">' +
-                    '<div style="font-size:14px; font-weight:600; color:#ddd;">' + acc.name + '</div>' +
+                    '<div style="font-size:14px; font-weight:600; color:#ddd;">' + escapeHtml(acc.name) + '</div>' +
                     '<div style="font-size:11px; color:#888;">UID: ' + acc.uid + ' | 消息数: ' + acc.msg_count + '</div>' +
                     '<div style="font-size:10px; color:#666;">注册时间: ' + regTime + '</div>' +
                     '<div style="font-size:10px; color:' + statusColor + '; margin-top:2px;">' + statusText + '</div>' +
@@ -13749,7 +13823,7 @@ HTML_TEMPLATE = """
             h += '<div class="account-item clickable" style="display:flex; align-items:center; padding:10px; margin:5px 0; background:' + bgColor + '; border-radius:8px; border:1px solid ' + borderColor + ';" onclick="selectDeleteAccount(&apos;' + acc.uid + '&apos;)">' +
                 '<div style="width:40px; height:40px; border-radius:12px; background:' + acc.avatar_bg + '; margin-right:12px; flex-shrink:0;"></div>' +
                 '<div style="flex:1; min-width:0;">' +
-                    '<div style="font-size:14px; font-weight:600; color:#ddd;">' + acc.name + '</div>' +
+                    '<div style="font-size:14px; font-weight:600; color:#ddd;">' + escapeHtml(acc.name) + '</div>' +
                     '<div style="font-size:11px; color:#888;">UID: ' + acc.uid + ' | 消息数: ' + acc.msg_count + '</div>' +
                     '<div style="font-size:10px; color:#666;">最后活跃: ' + lastActive + '</div>' +
                 '</div>' +
@@ -13840,7 +13914,7 @@ HTML_TEMPLATE = """
             sourceH += '<div class="account-item clickable" style="display:flex; align-items:center; padding:8px; margin:3px 0; background:' + bgColor + '; border-radius:6px; border:1px solid ' + borderColor + '; opacity:' + opacity + ';" onclick="' + onclickAttr + '">'+
                 '<div style="width:30px; height:30px; border-radius:8px; background:' + acc.avatar_bg + '; margin-right:10px; flex-shrink:0;"></div>'+
                 '<div style="flex:1; min-width:0;">'+
-                    '<div style="font-size:13px; font-weight:600; color:#ddd;">' + acc.name + '</div>'+
+                    '<div style="font-size:13px; font-weight:600; color:#ddd;">' + escapeHtml(acc.name) + '</div>'+
                     '<div style="font-size:10px; color:#888;">消息数: ' + acc.msg_count + '</div>'+
                 '</div>'+
                 '<div style="color:' + checkColor + '; font-size:16px;">' + checkIcon + '</div>'+
@@ -13862,7 +13936,7 @@ HTML_TEMPLATE = """
             targetH += '<div class="account-item clickable" style="display:flex; align-items:center; padding:8px; margin:3px 0; background:' + bgColor + '; border-radius:6px; border:1px solid ' + borderColor + '; opacity:' + opacity + ';" onclick="' + onclickAttr + '">'+
                 '<div style="width:30px; height:30px; border-radius:8px; background:' + acc.avatar_bg + '; margin-right:10px; flex-shrink:0;"></div>'+
                 '<div style="flex:1; min-width:0;">'+
-                    '<div style="font-size:13px; font-weight:600; color:#ddd;">' + acc.name + '</div>'+
+                    '<div style="font-size:13px; font-weight:600; color:#ddd;">' + escapeHtml(acc.name) + '</div>'+
                     '<div style="font-size:10px; color:#888;">消息数: ' + acc.msg_count + '</div>'+
                 '</div>'+
                 '<div style="color:' + checkColor + '; font-size:16px;">' + checkIcon + '</div>'+
@@ -13893,8 +13967,8 @@ HTML_TEMPLATE = """
             const target = accountPanelData.find(a => a.uid === selectedTargetAccount);
             if (source && target) {
                 previewEl.style.display = 'block';
-                contentEl.innerHTML = '将 <span style="color:#ff9500; font-weight:600;">' + source.name + '</span> (' + source.msg_count + '条消息) ' +
-                    '合并到 <span style="color:#30d158; font-weight:600;">' + target.name + '</span>';
+                contentEl.innerHTML = '将 <span style="color:#ff9500; font-weight:600;">' + escapeHtml(source.name) + '</span> (' + source.msg_count + '条消息) ' +
+                    '合并到 <span style="color:#30d158; font-weight:600;">' + escapeHtml(target.name) + '</span>';
                 return;
             }
         }
@@ -14800,9 +14874,10 @@ if __name__ == '__main__':
     log.getLogger('werkzeug').setLevel(log.ERROR)
     
     # ================= 服务器启动密码验证 =================
-    if SERVER_STARTUP_PASSWORD:
+    startup_password = load_startup_password()
+    if startup_password:
         # 使用统一的密码验证接口
-        authenticated = authenticate_startup(SERVER_STARTUP_PASSWORD, max_attempts=3)
+        authenticated = authenticate_startup(startup_password, max_attempts=3)
         
         if not authenticated:
             # 验证失败或用户取消，优雅退出程序
